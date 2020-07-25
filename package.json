@@ -1,0 +1,31 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@koa/cors": "^3.0.0",
+    "debug": "^4.1.1",
+    "js-base64": "^2.5.2",
+    "koa": "^2.11.0",
+    "koa-body": "^4.1.1",
+    "koa-json": "^2.0.2",
+    "koa-router": "^7.4.0",
+    "koa-send": "^5.0.0",
+    "koa-session": "^6.0.0",
+    "koa-static": "^5.0.0",
+    "mysql": "^2.18.1",
+    "node-fetch": "^2.6.0",
+    "php-unserialize": "0.0.1",
+    "request": "^2.88.0",
+    "request-promise-native": "^1.0.8",
+    "sharp": "^0.23.4",
+    "webdav": "^3.2.0",
+    "zlib": "^1.0.5"
+  }
+}

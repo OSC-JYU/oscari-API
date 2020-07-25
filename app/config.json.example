@@ -1,0 +1,55 @@
+{
+	"nextcloud": {
+		"url": "https://YOUR_NEXTCLOUD/remote.php/webdav/",
+		"username": "user",
+		"password": "pass"
+	},
+
+	"collectiveaccess": {
+		"url": "http://localhost/providence",
+		"db": {
+			"host": "172.19.0.2",
+			"user": "root",
+			"password": "root",
+			"database": "c_access"
+		}
+	},
+
+	"image": {
+		"usage": {
+			"width": 2048,
+			"height": 2048
+		},
+		"preview": {
+			"width": 200,
+			"height": 200
+		}
+	},
+
+	"authentication": "collectiveaccess",
+
+	"shibboleth": {
+		"headerId": "mail",
+		"users": {
+			"user@user.fi": {
+				"ca_user": "administrator",
+				"ca_password": "secret_password" 
+			}
+		},
+		"dummyUser": "user@user.fi"
+	},
+
+	"numbering_schema": {
+		"prefix": {
+			"dokumentti": "A",
+			"kirja": "L",
+			"lehtileike": "P",
+			"valokuva": "K",
+			"tallenne": "N",
+			"video": "N",
+			"audio": "N"
+		}
+	},
+
+	"volume": "/tmp"
+}
