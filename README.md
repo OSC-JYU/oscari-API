@@ -1,8 +1,9 @@
 
 # Oscari API
 
-Oscari API is a backend for Finnish Oscari museum information system called Oscari. Oscari is based on CollectiveAccess and it depends on Finnish installation profile. In its current state Oscari-API is *NOT* a generic, third-party API for CollectiveAccess.
+Oscari API is a backend for Finnish Oscari museum information system called Oscari (Oscari UI is released later). Oscari is based on CollectiveAccess with Finnish installation profile. In its current state Oscari-API is *NOT* a generic, third-party API for CollectiveAccess.
 
+Oscari API is designed for creating user interfaces for CA data.
 
 Under the hood Oscari api uses both original api of CA and direct mysql queries. Write operations are executed via original api (i.e. you **do not** need to give write permissions to the mysql). 
 
@@ -10,7 +11,7 @@ Under the hood Oscari api uses both original api of CA and direct mysql queries.
 
 ## Install
 
-Install first CollectiveAccess 1.7.8 with *Finnish installation profile* (JYU/OSC). 
+Install first CollectiveAccess 1.7.8 with *Finnish installation profile* (JYU/OSC). You can use this Docker setup: [https://github.com/artturimatias/CollectiveAccess] (https://github.com/artturimatias/CollectiveAccess)
 
     git clone this
     cd this
