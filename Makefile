@@ -12,6 +12,11 @@ start:
 		-p 8080:8080 \
 		--network oscari-net \
 		--volume collectiveaccess-data:/ca_media \
+		-e CA_URL=http://collectiveaccess/providence \
+		-e DB_HOST=mariadb \
+		-e DB_USER=root \
+		-e DB_PW=root \
+		-e DB_NAME=c_access \
 		--restart unless-stopped \
 		 osc/oscari-api
 

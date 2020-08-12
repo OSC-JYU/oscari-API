@@ -538,28 +538,30 @@ class CA {
 			}
 		}
 
-		if(data.relations.ca_entities) {
-			var relations = [];
-			for(var entity of data.relations.ca_entities) {
-				relations.push({entity_id: entity.entity_id, type_id: entity.link, direction:"ltor"});
+		if(data.relations) {
+			if(data.relations.ca_entities) {
+				var relations = [];
+				for(var entity of data.relations.ca_entities) {
+					relations.push({entity_id: entity.entity_id, type_id: entity.link, direction:"ltor"});
+				}
+				object.related.ca_entities = relations;
 			}
-			object.related.ca_entities = relations;
-		}
 
-		if(data.relations.ca_storage_locations) {
-			var relations = [];
-			for(var rel of data.relations.ca_storage_locations) {
-				relations.push({location_id: rel.location_id, type_id: rel.link, direction:"ltor"});
+			if(data.relations.ca_storage_locations) {
+				var relations = [];
+				for(var rel of data.relations.ca_storage_locations) {
+					relations.push({location_id: rel.location_id, type_id: rel.link, direction:"ltor"});
+				}
+				object.related.ca_storage_locations = relations;
 			}
-			object.related.ca_storage_locations = relations;
-		}
 
-		if(data.relations.ca_collections) {
-			var relations = [];
-			for(var rel of data.relations.ca_collections) {
-				relations.push({collection_id: rel.collection_id, type_id: rel.link, direction:"ltor"});
+			if(data.relations.ca_collections) {
+				var relations = [];
+				for(var rel of data.relations.ca_collections) {
+					relations.push({collection_id: rel.collection_id, type_id: rel.link, direction:"ltor"});
+				}
+				object.related.ca_collections = relations;
 			}
-			object.related.ca_collections = relations;
 		}
 
 		debug("***** DATA TO BE SEND *******")
@@ -894,7 +896,12 @@ class CA {
 
 	
 	async makeQuery(sql, values) {
-		const db = makeDb(this.config.collectiveaccess.db);
+		var dbconfig = {};
+		dbconfig.host = process.env.DB_HOST;
+		dbconfig.user = process.env.DB_USER;
+		dbconfig.password = process.env.DB_PW;
+		dbconfig.database = process.env.DB_NAME;
+		const db = makeDb(dbconfig);
 		var items = null;
 		try {
 		  items = await db.query(sql, values);
@@ -925,8 +932,8 @@ module.exports = CA;
 
 
 
-function makeDb( config ) {
-  const connection = mysql.createConnection(config);  return {
+function makeDb( dbconfig ) {
+  const connection = mysql.createConnection(dbconfig);  return {
     query( sql, args ) {
       return util.promisify( connection.query )
         .call( connection, sql, args );

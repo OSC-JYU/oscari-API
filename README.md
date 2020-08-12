@@ -19,9 +19,6 @@ Install first CollectiveAccess 1.7.8 with *Finnish installation profile* (JYU/OS
 
 Then open config.json.example anda save it as **config.json**.
 
-## Authentication
-
-
 
     
 Then just start the engine.
@@ -30,7 +27,7 @@ Then just start the engine.
     node index.js
 
 
-## Login /ca/login
+## Authentication
 
 API uses cookie-based sessions, so you must somehow save the cookie for future requests when working on command line. One good option is Httppie.
 

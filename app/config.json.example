@@ -6,13 +6,7 @@
 	},
 
 	"collectiveaccess": {
-		"url": "http://localhost/providence",
-		"db": {
-			"host": "172.19.0.2",
-			"user": "root",
-			"password": "root",
-			"database": "c_access"
-		}
+		"url": "http://localhost/providence"
 	},
 
 	"image": {

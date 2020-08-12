@@ -79,8 +79,14 @@ app.use(async function handleError(context, next) {
 		else
 			console.log('ERROR: ' + error);
 		if(error.stack) console.log(error.stack);
-		context.status = 500;
-		context.body = {'error':error};
+		// if we 401, then try to re-login
+		if(error && error.statusCode && error.statusCode == 401) {
+			console.log("TODO: trying to re-login")
+			context.status = 401;
+		} else {
+			context.status = 500;
+			context.body = {'error':error};
+		}
 	}
 });
 
@@ -152,9 +158,11 @@ router.post('/api/ca/login', async function(ctx) {
 		}
 	}
 	var ca_user = await ca.getUserId(auth.auth.username); // we want internal user ID
+	debug(config.collectiveaccess.url)
 	try {
 		var login_result = await requestp(config.collectiveaccess.url + "/service.php/auth/login", auth)
 		var login_json = JSON.parse(login_result);
+		debug(login_json)
 		var user = {username: auth.auth.username, user_id: ca_user, token: login_json.authToken}
 		ctx.session.user = user;
 		ctx.body = {user: auth.auth.username}
@@ -472,6 +480,8 @@ router.get('/api/ca/find', async function(ctx) {
 	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 
+	console.log(objects_url)
+
 	const [objects, entities, lots, collections, locations] = await Promise.all([
 		requestp(objects_url, {json:adv}),
 		requestp(entities_url, {json:adv}),
@@ -479,6 +489,7 @@ router.get('/api/ca/find', async function(ctx) {
 		requestp(collections_url, {json:adv}),
 		requestp(locations_url, {json:adv})
 	]);
+	console.log(objects)
 	/*
 	.catch(function(err) {
 	  console.log(err.message); // some coding error in handling happened
@@ -504,6 +515,7 @@ router.get('/api/ca/find/:table', async function(ctx) {
 	var paging = ca.getPaging(ctx);
 	var url = config.collectiveaccess.url + "/service.php/find/ca_" + ctx.params.table + "?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	debug('QUERY: ' + ctx.params.table + ' | ' + ctx.query.q)
+	debug(url)
 	try {
 		var result = await requestp(url, {json:adv})
 		console.log(result.total)
@@ -815,6 +827,7 @@ async function loadConfig() {
 		const file = await fsPromises.readFile('./config.json', 'utf8');
 		console.log('done')
 		config = JSON.parse(file);
+		config.collectiveaccess.url = process.env.CA_URL;
 	} catch(e) {
 		console.log('config file not found!')
 		process.exit(1);
@@ -848,8 +861,8 @@ function isValidUser(ctx) {
 }
 
 
-function makeDb( config ) {
-  const connection = mysql.createConnection( config );  return {
+function makeDb( dbconfig ) {
+  const connection = mysql.createConnection( dbconfig );  return {
     query( sql, args ) {
       return util.promisify( connection.query )
         .call( connection, sql, args );
@@ -863,7 +876,12 @@ function makeDb( config ) {
 
 
 async function makeQuery(sql) {
-	const db = makeDb(config.collectiveaccess.db);
+	var dbconfig = {};
+	dbconfig.host = process.env.DB_HOST;
+	dbconfig.user = process.env.DB_USER;
+	dbconfig.password = process.env.DB_PW;
+	dbconfig.database = process.env.DB_NAME;
+	const db = makeDb(dbconfig);
 	var items = null;
 	try {
 	  items = await db.query(sql);
