@@ -856,8 +856,8 @@ class CA {
 
 	getPaging(ctx) {
 		var limit = "&limit=50", start = ""
-		if(ctx.query.limit) limit = "&limit=" + ctx.query.limit;
-		if(ctx.query.start) start = "&start=" + ctx.query.start;	
+		if(parseInt(ctx.query.limit)) limit = "&limit=" + ctx.query.limit;
+		if(parseInt(ctx.query.start)) start = "&start=" + ctx.query.start;	
 		return start + limit;
 	}
 
