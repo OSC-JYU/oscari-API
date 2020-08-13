@@ -215,6 +215,7 @@ router.get('/api/ca/object_lots/:id', async function(ctx) {
 	//var url = config.collectiveaccess.url + "/service.php/item/ca_object_lots/id/"+ctx.params.id+"?pretty=1&authToken=" + ctx.session.user.token
 	//var result = await requestp(url)
 	var item = await ca.getItem("ca_object_lots", ctx.params.id, getLocale(ctx))
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 	
 })
@@ -239,6 +240,7 @@ router.get('/api/ca/objects/:id', async function(ctx, next) {
 		}
 		item.form = out;
 	}
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -252,6 +254,7 @@ router.get('/api/ca/objects/:id', async function(ctx, next) {
 router.get('/api/ca/entities/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_entities", ctx.params.id, getLocale(ctx))
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -259,6 +262,7 @@ router.get('/api/ca/entities/:id', async function(ctx, next) {
 router.get('/api/ca/locations/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_storage_locations", ctx.params.id, getLocale(ctx))
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -266,6 +270,7 @@ router.get('/api/ca/locations/:id', async function(ctx, next) {
 router.get('/api/ca/occurrences/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_occurrences", ctx.params.id, getLocale(ctx))
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -273,6 +278,7 @@ router.get('/api/ca/occurrences/:id', async function(ctx, next) {
 router.get('/api/ca/collections/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_collections", ctx.params.id, getLocale(ctx))
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -483,13 +489,14 @@ router.get('/api/ca/find', async function(ctx) {
 	console.log(objects_url)
 
 	const [objects, entities, lots, collections, locations] = await Promise.all([
-		requestp(objects_url, {json:adv}),
-		requestp(entities_url, {json:adv}),
-		requestp(lots_url, {json:adv}),
-		requestp(collections_url, {json:adv}),
-		requestp(locations_url, {json:adv})
+		requestp(objects_url + cacheRand(), {json:adv}),
+		requestp(entities_url + cacheRand(), {json:adv}),
+		requestp(lots_url + cacheRand(), {json:adv}),
+		requestp(collections_url + cacheRand(), {json:adv}),
+		requestp(locations_url + cacheRand(), {json:adv})
 	]);
 	console.log(objects)
+	console.log(entities)
 	/*
 	.catch(function(err) {
 	  console.log(err.message); // some coding error in handling happened
@@ -497,12 +504,15 @@ router.get('/api/ca/find', async function(ctx) {
 	  ctx.body = err.message
 	});
 */
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = {objects: objects, entities: entities, object_lots: lots, collections: collections, storage_locations: locations}
 })
 
 
 
 router.get('/api/ca/find/:table', async function(ctx) {
+	
+	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	
 	// we want description
 	var adv = {
@@ -517,8 +527,8 @@ router.get('/api/ca/find/:table', async function(ctx) {
 	debug('QUERY: ' + ctx.params.table + ' | ' + ctx.query.q)
 	debug(url)
 	try {
-		var result = await requestp(url, {json:adv})
-		console.log(result.total)
+		var result = await requestp(url + cacheRand(), {json:adv})
+		console.log('total: ' + result.total)
 		ctx.body = result;
 	} catch(e) {
 		if(e.statusCode) ctx.status = e.statusCode;
@@ -946,6 +956,9 @@ function getLocale(ctx) {
 	return locale;
 }
 
+function cacheRand() {
+	return "&rand=" + Math.floor(Math.random() * Math.floor(100000));
+}
 
 async function init() {
 	await loadConfig();
