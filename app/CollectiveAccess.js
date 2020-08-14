@@ -238,7 +238,6 @@ class CA {
 		var result = await requestp(url)
 		var models = JSON.parse(result)
 		if(!models[model]) throw('Model not found')
-		//console.log(models[ctx.params.model])
 		data[form].screens = await this.getUIScreens(ui_id, models[model])
 		data[form].relationship_types = models[model].relationship_types
 		
@@ -776,18 +775,22 @@ class CA {
 
 		var items = await this.makeQuery(sql);
 		var screens = this.groupScreensBy(items,'screen_label');
+		var entity_rels = await this.getRelationInfo('ca_entities')
 		
 		// combine screens with model
-		for(var screen in screens) {
-			for(var bundle of screens[screen].bundles) {
-				
+		 Object.keys(screens).forEach(function(screen){
+
+			var bundles = [];
+		    for(var bundle of screens[screen].bundles) {
 				// it seems that 1.7.9 bundle naming is changed
-				if(bundle.bundle_name.includes('.')) {
+				if(bundle.bundle_name && bundle.bundle_name.includes('.')) {
 					bundle.bundle_name = bundle.bundle_name.split(".")[1]
 				}
 				
+
+				
 				if(bundle.bundle_name.includes('ca_entities')) {
-					bundle.settings.relation_info = await this.getRelationInfo('ca_entities')
+					bundle.settings.relation_info = entity_rels
 				}
 				// remove "ca_attribute_" from bundle names
 				if(bundle.bundle_name.includes('ca_attribute_')) {
@@ -800,14 +803,31 @@ class CA {
 					bundle.list_id = "18";
 					//bundle.elements = {elements_in_set: {status:{settings:{}, datatype: 'List'}}}
 				}
+				
 				for(var element in model.elements) {
 					
 					if(element == bundle.bundle_name) {
+						console.log('bundle found ' + element)
 						bundle.elements = model.elements[element]
-					}
-				}
-			} 
-		}
+					} 
+				} 
+
+				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels') {
+					bundles.push(bundle)
+				} 
+				
+				
+			}
+			screens[screen].bundles = bundles;
+		    
+			//var bundles = screens[screen].bundles.map(function(bundle) {
+
+
+			//}); 
+			
+			
+		});
+		//screens.Perustiedot.bundles[4] = 'koira'
 		
 		return screens;
 	}
