@@ -80,9 +80,10 @@ app.use(async function handleError(context, next) {
 			console.log('ERROR: ' + error);
 		if(error.stack) console.log(error.stack);
 		// if we 401, then try to re-login
-		if(error && error.statusCode && error.statusCode == 401) {
-			console.log("TODO: trying to re-login")
-			context.status = 401;
+		if(error && error.statusCode) {
+			//console.log("TODO: trying to re-login")
+			context.status = error.statusCode;
+			context.body = {}
 		} else {
 			context.status = 500;
 			context.body = {'error':error};
@@ -215,7 +216,6 @@ router.get('/api/ca/object_lots/:id', async function(ctx) {
 	//var url = config.collectiveaccess.url + "/service.php/item/ca_object_lots/id/"+ctx.params.id+"?pretty=1&authToken=" + ctx.session.user.token
 	//var result = await requestp(url)
 	var item = await ca.getItem("ca_object_lots", ctx.params.id, getLocale(ctx))
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 	
 })
@@ -240,21 +240,14 @@ router.get('/api/ca/objects/:id', async function(ctx, next) {
 		}
 		item.form = out;
 	}
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
-router.get('/api/ca/objects/:id', async function(ctx, next) {
-	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
-	var item = await ca.getItem("ca_objects", ctx.params.id, getLocale(ctx))
-	await ca.getInputFormAndModel(ctx);
-	ctx.body = item;
-})
 
 router.get('/api/ca/entities/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_entities", ctx.params.id, getLocale(ctx))
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+	//await ca.getInputFormAndModel(ctx);
 	ctx.body = item;
 })
 
@@ -262,7 +255,6 @@ router.get('/api/ca/entities/:id', async function(ctx, next) {
 router.get('/api/ca/locations/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_storage_locations", ctx.params.id, getLocale(ctx))
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -270,7 +262,22 @@ router.get('/api/ca/locations/:id', async function(ctx, next) {
 router.get('/api/ca/occurrences/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_occurrences", ctx.params.id, getLocale(ctx))
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+	if(ctx.query.form){
+		var form = await ca.getInputFormAndModel(ctx, 'occurrences_ui', 'haastattelu');
+		var out = {screens: {}}
+		for(var screen in form.screens) {
+			console.log(screen)
+			out.screens[screen] = []
+			if(form.screens[screen].bundles) {
+				for(var b of form.screens[screen].bundles) {
+					var b_obj = {'name': b.bundle_name}
+					if(item.elements[b.bundle_name]) b_obj.element = item.elements[b.bundle_name]
+					out.screens[screen].push(b_obj) 
+				}
+			}
+		}
+		item.form = out;
+	}
 	ctx.body = item;
 })
 
@@ -278,7 +285,6 @@ router.get('/api/ca/occurrences/:id', async function(ctx, next) {
 router.get('/api/ca/collections/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_collections", ctx.params.id, getLocale(ctx))
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	ctx.body = item;
 })
 
@@ -473,6 +479,7 @@ router.get('/api/ca/find', async function(ctx) {
 	var adv = {
 		"bundles": {
 			"description" : {},
+			"yleisnimi" : {"convertCodesToDisplayText": true},
 			"ca_object_representations.media.tiny" : {"returnAsArray" : true}
 		}
 	}
@@ -485,15 +492,17 @@ router.get('/api/ca/find', async function(ctx) {
 	var lots_url = config.collectiveaccess.url + "/service.php/find/ca_object_lots?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var occurrences_url = config.collectiveaccess.url + "/service.php/find/ca_occurrences?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 
 	console.log(objects_url)
 
-	const [objects, entities, lots, collections, locations] = await Promise.all([
+	const [objects, entities, lots, collections, locations, occurrences] = await Promise.all([
 		requestp(objects_url + cacheRand(), {json:adv}),
 		requestp(entities_url + cacheRand(), {json:adv}),
 		requestp(lots_url + cacheRand(), {json:adv}),
 		requestp(collections_url + cacheRand(), {json:adv}),
-		requestp(locations_url + cacheRand(), {json:adv})
+		requestp(locations_url + cacheRand(), {json:adv}),
+		requestp(occurrences_url + cacheRand(), {json:adv})
 	]);
 	console.log(objects)
 	console.log(entities)
@@ -504,20 +513,19 @@ router.get('/api/ca/find', async function(ctx) {
 	  ctx.body = err.message
 	});
 */
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-	ctx.body = {objects: objects, entities: entities, object_lots: lots, collections: collections, storage_locations: locations}
+	ctx.body = {objects: objects, entities: entities, object_lots: lots, collections: collections, storage_locations: locations, occurrences: occurrences}
 })
 
 
 
 router.get('/api/ca/find/:table', async function(ctx) {
 	
-	ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 	
 	// we want description
 	var adv = {
 		"bundles": {
 			"description" : {},
+			"yleisnimi" : {"convertCodesToDisplayText": true},
 			"ca_object_representations.media.medium" : {}
 		}
 	}

@@ -91,7 +91,7 @@ class CA {
 		var sql = "SELECT user_id FROM ca_users WHERE user_name = ?";
 		var user = await this.makeQuery(sql, username)
 		if(Array.isArray(user) && user.length == 1) return user[0].user_id;
-		else throw("User not found")
+		else throw({msg:"User not found", statusCode: 401})
 		
 	}
 
@@ -99,7 +99,7 @@ class CA {
 	async getLists() {
 		var sql = "select list.list_code, list.list_id, label.name, CONCAT(language,'_',country) AS locale FROM ca_lists list INNER JOIN ca_list_labels label ON list.list_id = label.list_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id;" 
 		var lists = await this.makeQuery(sql)
-		return groupSetsBy(lists, 'list_code');
+		return groupListsBy(lists, 'list_code');
 	}
 
 
@@ -268,6 +268,14 @@ class CA {
 		return item;
 	}
 
+	async getItemType(table, type_id) {
+		var lists = await this.getLists();
+		var list_id = lists[SINGULARS[table] + '_types'].id;
+		var values = [list_id, type_id]
+		var sql = "SELECT IDNO FROM ca_list_items WHERE list_id = ? AND item_id = ?;"
+		var type = await this.makeQuery(sql, values)
+		return type[0].IDNO
+	}
 
 	// direct database getter for items 
 	async getItem(table, id, locale) {
@@ -276,6 +284,7 @@ class CA {
 		try {
 			// get IDNO and lot_id
 			var item = await this.getBaseInfo(table, id)
+			item.typename = await this.getItemType(table, item.type_id);
 			item.id = id;
 			item.table = table;
 			item.elements = {}
@@ -320,10 +329,12 @@ class CA {
 				item.relations.entities = await this.getRelations('ca_objects_x_entities', 'entity', 'object_id', 'entity_id', id, true);
 				item.relations.collections = await this.getRelations('ca_objects_x_collections', 'collection', 'object_id', 'collection_id', id);
 				item.relations.storage_locations = await this.getRelations('ca_objects_x_storage_locations', 'storage_location', 'object_id', 'location_id', id, true);
+				item.relations.occurrences = await this.getRelations('ca_objects_x_occurrences', 'occurrence', 'object_id', 'occurrence_id', id, true);
 				
 			} else if(table == 'ca_entities') {
 				item.relations.objects = await this.getRelations('ca_objects_x_entities', 'object', 'entity_id', 'object_id', id);
 				item.relations.object_lots = await this.getRelations('ca_object_lots_x_entities', 'object_lot', 'entity_id', 'lot_id', id);
+				item.relations.occurrences = await this.getRelations('ca_entities_x_occurrences', 'occurrence', 'entity_id', 'occurrence_id', id);
 				
 			} else if(table == 'ca_storage_locations') {
 				item.relations.objects = await this.getRelations('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
@@ -334,11 +345,15 @@ class CA {
 				
 			} else if(table == 'ca_collections') {
 				item.relations.objects = await this.getRelations('ca_objects_x_collections', 'object', 'collection_id', 'object_id', id);
+
+			} else if(table == 'ca_occurrences') {
+				item.relations.entities = await this.getRelations('ca_entities_x_occurrences', 'entity', 'occurrence_id', 'entity_id', id);
+				item.relations.objects = await this.getRelations('ca_objects_x_occurrences', 'object', 'occurrence_id', 'object_id', id);
 			}
 			
 			return item;
 		} catch(e) {
-			throw("Could not get item " + id + " error: " + e.message)
+			throw({msg: "Could not get item " + id + " error: " + e.message, statusCode: 404})
 		}
 		
 		
@@ -788,10 +803,6 @@ class CA {
 				}
 				
 
-				
-				if(bundle.bundle_name.includes('ca_entities')) {
-					bundle.settings.relation_info = entity_rels
-				}
 				// remove "ca_attribute_" from bundle names
 				if(bundle.bundle_name.includes('ca_attribute_')) {
 					bundle.bundle_name = bundle.bundle_name.replace('ca_attribute_', '');
@@ -812,7 +823,10 @@ class CA {
 					} 
 				} 
 
-				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels') {
+				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels' || bundle.bundle_name.includes('ca_entities')) {
+					if(bundle.bundle_name.includes('ca_entities')) {
+						bundle.settings.relation_info = entity_rels
+					}
 					bundles.push(bundle)
 				} 
 				
@@ -1011,7 +1025,7 @@ function groupListsBy(objectArray, property) {
 		if (!acc[key]) {
 			acc[key] = {id: obj.list_id, labels:[]}
 		}
-		acc[key].labels.push({name:obj.name, language: obj.language, })
+		acc[key].labels.push({name:obj.name, language: obj.locale, })
 		return acc
 	}, {})
 }
