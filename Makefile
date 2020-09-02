@@ -1,3 +1,6 @@
+DUOFILES := /home/arihayri/Pictures/DuoPrev/import
+NFS := /tmp
+
 build:
 	docker build -t osc/oscari-api:latest .
 
@@ -11,8 +14,9 @@ start:
 	docker run -d --name oscari-api \
 		-p 8080:8080 \
 		--network oscari-net \
-		--volume collectiveaccess-data:/ca_media \
-		-e CA_URL=http://collectiveaccess/providence \
+		--mount type=bind,source=$(DUOFILES),target=/ca_import \
+		--mount type=bind,source=$(NFS),target=/nfsdata \
+		-e CA_URL=http://172.18.0.3/providence \
 		-e DB_HOST=mariadb \
 		-e DB_USER=root \
 		-e DB_PW=root \

@@ -601,32 +601,98 @@ class CA {
 	}
 
 
+	async createRepresentation(importPath, filename, original_filename, object_id, token) {
+		var path = require("path")
+		var import_file = path.join(importPath, filename)
+		var data = {
+			 "intrinsic_fields":{
+			   "type_id":"134",
+			   "media": import_file
+			 },
+			 "preferred_labels":[
+			   {
+				 "locale":"fi_FI",
+				 "name": filename 
+			   }
+			 ],
+			  "attributes":{
+				"duo_tiedosto":[
+				  {
+					"duo_tiedosto":original_filename
+				  }
+				]
+			  },
+			 "related": {
+				 "ca_objects": [{"object_id": object_id}]
+			 }
+		}
+
+		var url = this.config.collectiveaccess.url + "/service.php/item/ca_object_representations?pretty=1&authToken=" + token;
+		debug(url)
+		console.log(JSON.stringify(data, null, 2))
+		var result = await requestp(url, {method: "PUT", json: data})
+		return result;
+		
+	}
+
 
 	async editItem(table, id, data, token) {
 		if(!id) throw("Item id must be set!")
 		
-		var object = {
-			"attributes": {},
-			"related": {}
-		}
+		var object = {}
 
-		if(data.attributes) {
-			object.remove_attributes = []
+		// attributes and labels
+		if(data.attributes && Object.keys(data.attributes).length > 0) {
+			object.attributes = {}
 			for(var attr in data.attributes) {
-				object.remove_attributes.push(attr);
-				object.attributes[attr] = data.attributes[attr];
+				if(attr == 'preferred_labels') {
+					object.remove_all_labels = true;
+					if(Array.isArray(data.attributes[attr]) && data.attributes[attr].length == 1)
+					var label = {locale: 'fi_FI'}
+					label.name = data.attributes[attr][0].preferred_labels
+					object.preferred_labels = [label];
+				} else { 
+					if(!object.remove_attributes) object.remove_attributes = [] 
+					object.remove_attributes.push(attr);
+					object.attributes[attr] = data.attributes[attr];
+				}
 			}
 		}
+		
+		// relations
+		if(data.relations && Object.keys(data.relations).length > 0) {
+			object.remove_relationships = []
+			// if we have relations for table, then we must remove all relations first
+			for(var rel_table in data.relations) {
+				object.remove_relationships.push(rel_table);
+				// if we have data (relations), then we must add them
+				if(data.relations[rel_table].length > 0) {
+					if(object.related)
+						object.related[rel_table] = data.relations[rel_table];
+					else {
+						object.related = {}
+						object.related[rel_table] = data.relations[rel_table];
+					}
+				}
+			}
+		}
+		
+
 		
 		debug("***** DATA TO BE SEND *******")
 		debug(JSON.stringify(object, null, 2))
 		debug("***** DATA TO BE SEND ENDS*******")
 
-		var url = this.config.collectiveaccess.url + "/service.php/item/" + table + "/id/" + id + "?pretty=1&authToken=" + token;
-		debug(url)
-		var result = await requestp(url, {method: "PUT", json: object})
-		debug(result)
-		return result;
+		try {
+			var url = this.config.collectiveaccess.url + "/service.php/item/" + table + "/id/" + id + "?pretty=1&authToken=" + token;
+			debug(url)
+			var result = await requestp(url, {method: "PUT", json: object})
+			debug(result)
+			return result;
+		} catch(e) {
+			console.log(e)
+			throw(e);
+		}
 	}
 
 
@@ -791,6 +857,7 @@ class CA {
 		var items = await this.makeQuery(sql);
 		var screens = this.groupScreensBy(items,'screen_label');
 		var entity_rels = await this.getRelationInfo('ca_entities')
+		var collection_rels = await this.getRelationInfo('ca_collections')
 		
 		// combine screens with model
 		 Object.keys(screens).forEach(function(screen){
@@ -818,14 +885,16 @@ class CA {
 				for(var element in model.elements) {
 					
 					if(element == bundle.bundle_name) {
-						console.log('bundle found ' + element)
 						bundle.elements = model.elements[element]
 					} 
 				} 
 
-				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels' || bundle.bundle_name.includes('ca_entities')) {
+				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels' || bundle.bundle_name.includes('ca_entities') || bundle.bundle_name.includes('ca_collections')) {
 					if(bundle.bundle_name.includes('ca_entities')) {
 						bundle.settings.relation_info = entity_rels
+					}
+					if(bundle.bundle_name.includes('ca_collections')) {
+						bundle.settings.relation_info = collection_rels
 					}
 					bundles.push(bundle)
 				} 

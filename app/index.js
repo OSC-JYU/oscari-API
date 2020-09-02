@@ -666,10 +666,76 @@ router.put('/api/ca/object_lots/:id/:type', async function(ctx) {
 
 
 
+/*********************************************************************************
+ *  					files
+ * *******************************************************************************/
 
+/*
+ * 
+ * - re-name file 
+ * - move to nfsdata/data/ca_media
+ * - if image -> generate smaller jpg -> copy jpg to CA's import directory (
+ * - if PDF -> copy original file to CA's import directory
+ * - call object representation API
+ * 
+ */
 
+router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
+	
+	var sanitize = require("sanitize-filename");
+	var os = require("os")
+	
+	var body = {}
+	// get item data (idno, lot_id)
+	var item = null;
+	try {
+		var item = await ca.getItem("ca_objects", ctx.params.id, getLocale(ctx))
+	} catch(e) {
+		ctx.body = {error: e};
+		ctx.status = 500
+		console.log(e)
+		throw(e)
+	}
+	
+	// create filename
+	const file = ctx.request.files.file;
+	var filename = sanitize(file.name)
+	filename = filename.replace(/ /g, '_')
+	filename = item.idno + '_' + filename
+	var uploadPath = path.join('/nfsdata', item.lot_id.toString())
+	var filePath = path.join(uploadPath, filename)
+	console.log('UPLOAD ' + filename)
+	
+	// check that LOT dir does exist
+	if (!fs.existsSync(uploadPath)) {
+		console.log('no ' + uploadPath)
+		fs.mkdirSync(uploadPath)
+	}
 
+	// check that file does not exist
+	if (fs.existsSync(filePath)) {
+		console.log('file exists')
+		ctx.status = 409
+		ctx.body = {error: 'file exists'}
+		return
+	} else {
+		await pipeline (
+			fs.createReadStream(file.path),
+			fs.createWriteStream(filePath)
+		);
+		
+		// copy file to import dir of CA
+		await pipeline (
+			fs.createReadStream(filePath),
+			fs.createWriteStream(path.join('/ca_import', filename))
+		);
+		// add file to CollectiveAccess via API
+		var importPath = "/var/www/providence/import/duo/import"
+		var result = await ca.createRepresentation(importPath, filename,  filePath, item.id, ctx.session.user.token)
 
+		ctx.body = result
+	}
+});
 
 /*********************************************************************************
  *  					NEXTCLOUD
