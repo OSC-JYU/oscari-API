@@ -320,7 +320,15 @@ router.put('/api/ca/entities', async function(ctx, next) {
 	}
 })
 
+router.put('/api/ca/entities/:id', async function(ctx, next) {
 
+	try {
+		result = await ca.editItem("ca_entities", ctx.params.id, ctx.request.body, ctx.session.user.token);
+		ctx.body = result;
+	} catch(e) {
+		throw("Entity editing failed!", e)
+	}
+})
 
 router.put('/api/ca/object_lots', async function(ctx, next) {
 	try {
@@ -328,6 +336,16 @@ router.put('/api/ca/object_lots', async function(ctx, next) {
 		ctx.body = result;
 	} catch(e) {
 		throw("Object lot creation failed!", e)
+	}
+})
+
+router.put('/api/ca/object_lots/:id', async function(ctx, next) {
+
+	try {
+		result = await ca.editItem("ca_object_lots", ctx.params.id, ctx.request.body, ctx.session.user.token);
+		ctx.body = result;
+	} catch(e) {
+		throw("Object LOT editing failed!", e)
 	}
 })
 
@@ -524,8 +542,10 @@ router.get('/api/ca/find/:table', async function(ctx) {
 	// we want description
 	var adv = {
 		"bundles": {
+			"idno": {},
 			"description" : {},
 			"yleisnimi" : {"convertCodesToDisplayText": true},
+			"type_id" : {"convertCodesToDisplayText": true},
 			"ca_object_representations.media.medium" : {}
 		}
 	}
@@ -702,9 +722,9 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 	var filename = sanitize(file.name)
 	filename = filename.replace(/ /g, '_')
 	filename = item.idno + '_' + filename
-	var uploadPath = path.join('/nfsdata', item.lot_id.toString())
+	var uploadPath = path.join('/aineistot', item.lot_id.toString())
 	var filePath = path.join(uploadPath, filename)
-	console.log('UPLOAD ' + filename)
+	console.log('UPLOADing to aineistot' + filename)
 	
 	// check that LOT dir does exist
 	if (!fs.existsSync(uploadPath)) {
@@ -727,15 +747,36 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 		// copy file to import dir of CA
 		await pipeline (
 			fs.createReadStream(filePath),
-			fs.createWriteStream(path.join('/ca_import', filename))
+			fs.createWriteStream(path.join('/import', filename))
 		);
 		// add file to CollectiveAccess via API
 		var importPath = "/var/www/providence/import/duo/import"
 		var result = await ca.createRepresentation(importPath, filename,  filePath, item.id, ctx.session.user.token)
+		
+		// remove file from CA import dir
+		try {
+		  fs.unlinkSync(path.join('/import', filename))
+		  //file removed
+		} catch(err) {
+			console.error(err)
+		}
 
 		ctx.body = result
 	}
+
 });
+
+
+// get file
+router.get('/api/ca/files/:dir/:file', async function(ctx) {
+	if(!parseInt(ctx.params.dir) || ctx.params.dir !== 'luetteloimaton') {
+		throw('illegal path')
+	} else {
+		var file = path.join('/aineistot', ctx.params.dir, ctx.params.file);
+		debug(file)
+		ctx.body = client.createReadStream(file)
+	}
+})
 
 /*********************************************************************************
  *  					NEXTCLOUD

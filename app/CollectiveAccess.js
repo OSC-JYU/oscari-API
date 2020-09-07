@@ -25,6 +25,7 @@ const TABLES = {
 	'ca_lists': 					36,
 	'ca_object_lots': 				51,
 	'ca_object_lots_x_entities':	53,
+	'ca_object_representations':	56,
 	'ca_objects': 					57,
 	'ca_objects_x_entities': 		59,
 	'ca_objects_x_objects': 		62,
@@ -340,8 +341,9 @@ class CA {
 				item.relations.objects = await this.getRelations('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
 				
 			} else if(table == 'ca_object_lots') {
-				item.relations.objects = await this.getObjectsByIDNO('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
 				item.relations.entities = await this.getRelations('ca_object_lots_x_entities', 'entity', 'lot_id', 'entity_id', id);
+				item.relations.objects = await this.getObjectsByLOT(id);
+				item.object_count = await this.getObjectCount(id);
 				
 			} else if(table == 'ca_collections') {
 				item.relations.objects = await this.getRelations('ca_objects_x_collections', 'object', 'collection_id', 'object_id', id);
@@ -359,19 +361,42 @@ class CA {
 		
 	}
 
+	async getObjectCount(lot_id) {
+		var sql = "SELECT count(object_id) AS obj_count FROM ca_objects WHERE lot_id = " + lot_id 
+		var count = await this.makeQuery(sql);
+		return count[0].obj_count
+	}
 
+	async getObjectsByLOT(lot_id, locale) {
+		var items = []
+		var sql = "SELECT object_id, type_id FROM ca_objects WHERE lot_id = " + lot_id + " LIMIT 50"
+		var objects = await this.makeQuery(sql);
+		for(var object of objects) {
+			var item = await this.getBaseInfo('ca_objects', object.object_id)
+			item.typename = await this.getItemType('ca_objects', item.type_id);
+			item.labels = await this.getItemLabels('ca_objects', object.object_id, locale);
+			items.push(item)
+		}
 
-	async getObjectsByIDNO(table, label_table, from_name, to_name, id) {
-		
+		return items
+
 	}
 
 	async getRelations(table, label_table, from_name, to_name, id, with_rel_info = false) {
 		
+		var sql = ''
 		var values = [id];
 		var name = "name";
+		var item_table = table.split('_x_')[0]
 		if(label_table == 'entity') name = 'displayname';
 		debug("getrelations: " + table, label_table)
-		var sql = "SELECT rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+"  WHERE " + from_name + " = ? AND label.is_preferred = 1 ORDER BY label."+name;
+		
+		if(item_table == 'ca_objects'&& label_table == 'object') { // we want idno for objects
+			sql = "SELECT item.idno, rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+"  INNER JOIN " + item_table + " item ON rel." + to_name + " = item." + to_name + " WHERE rel." + from_name + " = ? AND label.is_preferred = 1 ORDER BY item.idno LIMIT 50";
+
+		} else {
+			sql = "SELECT rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+"  WHERE " + from_name + " = ? AND label.is_preferred = 1 ORDER BY label."+name + " LIMIT 50";
+		}
 		debug(sql)
 		// get relations
 		var relations = await this.makeQuery(sql, values);
@@ -424,6 +449,9 @@ class CA {
 			if(representation.media) {
 				var bin = representation.media;
 				representation.media = PHPUnserialize.unserialize(zlib.inflateSync(Buffer.from(bin,'base64')).toString())
+				representation.labels = await this.getItemLabels('ca_object_representations', representation.representation_id)
+				representation.attributes = await this.getAttributeValues('ca_object_representations', representation.representation_id)
+				
 			}
 		}
 		return representations;
@@ -449,8 +477,10 @@ class CA {
 		} else if(table == 'ca_object_lots') { // storage location id = location_id
 			var table_id = 'lot_id';
 			var label_table = 'ca_object_lot_labels';
+		} else if(table == 'ca_object_representations') { // object representation id = representation_id
+			var table_id = 'representation_id';
+			var label_table = 'ca_object_representation_labels';
 		} else {
-			
 			var singularTable = SINGULARS[table]
 			var table_id = singularTable + '_id';
 			var label_table = 'ca_' + singularTable + '_labels';
@@ -459,7 +489,7 @@ class CA {
 		
 		// labels are different for entities
 		if(table == 'ca_entities') {
-			sql_labels = "select CONCAT(language,'_',country) AS locale, label.displayname, label.is_preferred from " + table + " obj INNER JOIN " +label_table + " label ON label." + table_id + " = obj." + table_id + " INNER JOIN ca_locales  lo ON lo.locale_id = label.locale_id WHERE obj." + table_id + " = " + id + ";"
+			sql_labels = "select CONCAT(language,'_',country) AS locale, label.displayname, label.forename, label.surname, label.is_preferred from " + table + " obj INNER JOIN " +label_table + " label ON label." + table_id + " = obj." + table_id + " INNER JOIN ca_locales  lo ON lo.locale_id = label.locale_id WHERE obj." + table_id + " = " + id + ";"
 		}
 		debug(sql_labels)
 		var labels = await this.makeQuery(sql_labels);
@@ -649,7 +679,11 @@ class CA {
 					object.remove_all_labels = true;
 					if(Array.isArray(data.attributes[attr]) && data.attributes[attr].length == 1)
 					var label = {locale: 'fi_FI'}
-					label.name = data.attributes[attr][0].preferred_labels
+					// entity names have multiple keys (forename, surname, displayname)
+					console.log(data.attributes[attr][0])
+					for(var key in data.attributes[attr][0]) {
+						label[key] = data.attributes[attr][0][key]
+					}
 					object.preferred_labels = [label];
 				} else { 
 					if(!object.remove_attributes) object.remove_attributes = [] 
