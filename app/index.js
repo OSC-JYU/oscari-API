@@ -722,9 +722,9 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 	var filename = sanitize(file.name)
 	filename = filename.replace(/ /g, '_')
 	filename = item.idno + '_' + filename
-	var uploadPath = path.join('/aineistot', item.lot_id.toString())
+	var uploadPath = path.join('/files', item.lot_id.toString())
 	var filePath = path.join(uploadPath, filename)
-	console.log('UPLOADing to aineistot' + filename)
+	console.log('UPLOADing to /files/' + filename)
 	
 	// check that LOT dir does exist
 	if (!fs.existsSync(uploadPath)) {
@@ -745,20 +745,23 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 		);
 		
 		// copy file to import dir of CA
-		await pipeline (
-			fs.createReadStream(filePath),
-			fs.createWriteStream(path.join('/import', filename))
-		);
-		// add file to CollectiveAccess via API
-		var importPath = "/var/www/providence/import/duo/import"
-		var result = await ca.createRepresentation(importPath, filename,  filePath, item.id, ctx.session.user.token)
-		
-		// remove file from CA import dir
-		try {
-		  fs.unlinkSync(path.join('/import', filename))
-		  //file removed
-		} catch(err) {
-			console.error(err)
+		var extensions = ['tif', 'tiff', 'jpg', 'png','jpeg']
+		var splitted = filename.split('.')
+		if(extensions.includes(splited[splitted.length - 1].toLowerCase())) {
+			await pipeline (
+				fs.createReadStream(filePath),
+				fs.createWriteStream(path.join('/import', filename))
+			);
+			// add file to CollectiveAccess via API
+			var result = await ca.createRepresentation(config.collectiveaccess.import_path, filename,  filePath, item.id, ctx.session.user.token)
+			
+			// remove file from CA import dir
+			try {
+			  fs.unlinkSync(path.join('/import', filename))
+			  //file removed
+			} catch(err) {
+				console.error(err)
+			}
 		}
 
 		ctx.body = result
@@ -772,7 +775,7 @@ router.get('/api/ca/files/:dir/:file', async function(ctx) {
 	if(!parseInt(ctx.params.dir) || ctx.params.dir !== 'luetteloimaton') {
 		throw('illegal path')
 	} else {
-		var file = path.join('/aineistot', ctx.params.dir, ctx.params.file);
+		var file = path.join('/files', ctx.params.dir, ctx.params.file);
 		debug(file)
 		ctx.body = client.createReadStream(file)
 	}
@@ -953,6 +956,7 @@ async function loadConfig() {
 		console.log('done')
 		config = JSON.parse(file);
 		config.collectiveaccess.url = process.env.CA_URL;
+		config.collectiveaccess.import_path = process.env.CA_IMPORT;
 	} catch(e) {
 		console.log('config file not found!')
 		process.exit(1);
