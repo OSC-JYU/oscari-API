@@ -20,9 +20,14 @@ const SINGULARS = {
 
 // from https://github.com/collectiveaccess/providence/blob/master/app/conf/datamodel.conf
 const TABLES = {
+	"ca_attribute_values":			 3,
+	"ca_attributes":				 4,
 	'ca_collections': 				13,
 	'ca_entities': 					20,
+	'ca_entity_labels': 			25,
 	'ca_lists': 					36,
+	'ca_lists': 					36,
+	'ca_object_labels': 			50,
 	'ca_object_lots': 				51,
 	'ca_object_lots_x_entities':	53,
 	'ca_object_representations':	56,
@@ -31,8 +36,10 @@ const TABLES = {
 	'ca_objects_x_objects': 		62,
 	'ca_objects_x_occurrences': 	63,
 	'ca_objects_x_places': 			64,
+	"ca_occurrence_labels":			66,
 	'ca_occurrences': 				67,
 	'ca_places': 					72,
+	"ca_storage_location_labels":	88,
 	'ca_storage_locations': 		89,
 	'ca_objects_x_storage_locations': 119
 }
@@ -112,16 +119,21 @@ class CA {
 
 
 	async getSet(code) {
+		var out = {}
 		var sql = "SELECT set_id FROM ca_sets WHERE set_code = ?"; 
 		var set_id = await this.makeQuery(sql, code);
 		if(Array.isArray(set_id) && set_id.length == 1) { 
 			var sql = "SELECT row_id, table_num FROM ca_set_items WHERE set_id = ?"; 
-			var set_items = await this.makeQuery(sql, set_id[0].set_id);
+			var items = await this.makeQuery(sql, set_id[0].set_id);
+			out.count = items.length
+			out.items = items
 			// let's map table nums to table names
-			for(var item of set_items) {
+			for(var item of out.items) {
 				item.type = getTableName(item.table_num)
+				item.media = await this.getMedia(item.row_id);
+				//item.data = await this.getItem(item.type, item.row_id, 'FI_fi')
 			}
-			return set_items;
+			return out;
 		}
 	}
 
@@ -135,7 +147,42 @@ class CA {
 		var lot_status_id = await this.makeQuery(lot_sql)
 	}
 
+	async getStorageLocations(parent) {
+		if(!parent) parent = 1;
+		
+		var out = {}
+		var values = [parent]
+		
+		// get parent also
+		if(parent !== 1) {
+			var parent_sql = "select name from ca_storage_location_labels WHERE location_id=?;"			
+			var parent_result = await this.makeQuery(parent_sql, values)
+			out.parent =  parent_result[0].name
+		}
 
+		var sql = "select loc.location_id,idno,parent_id, name from ca_storage_locations loc INNER JOIN ca_storage_location_labels label ON label.location_id = loc.location_id where parent_id=? ORDER by idno;"
+		out.location = await this.makeQuery(sql, values)
+		
+		return out
+	}
+
+	async getStorageLocationParent(location_id) {
+		if(!location_id) return {}
+		
+		var out = {}
+		var values = [location_id]
+		
+		// get parent
+		var sql = "select name from ca_storage_location_labels WHERE location_id=?;"		
+		console.log(sql, values)	
+		var result = await this.makeQuery(sql, values)
+		if(result && result[0] && result[0].name)
+			out.name =  result[0].name
+		else
+			out.name = ''
+		
+		return out
+	}
 
 	async getRelationships() {
 		var sql = "select CONCAT(language,'_',country) AS locale, labels.locale_id, labels.typename, labels.typename_reverse, labels.description, labels.description_reverse,types.type_id, types.type_code from ca_relationship_types types INNER JOIN ca_relationship_type_labels labels ON  types.type_id = labels.type_id INNER JOIN ca_locales lo ON lo.locale_id = labels.locale_id;" 
@@ -316,14 +363,15 @@ class CA {
 
 			// containers
 			debug('********** CONTAINERS ********** ')
-			await this.pickValues(containers, item, locale, true)
+			if(table !== 'ca_storage_locations')
+				await this.pickValues(containers, item, locale, true)
 			//debug(containers)
 			debug('********** CONTAINERS ENDS ****** ')
 			// non-containers
 			await this.pickValues(item_attributes, item, locale, false)
 			debug(item.elements)
 			
-			// entity relations
+			// relations
 			
 			if(table == 'ca_objects') {
 				item.media = await this.getMedia(id);
@@ -341,15 +389,15 @@ class CA {
 				item.relations.objects = await this.getRelations('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
 				
 			} else if(table == 'ca_object_lots') {
-				item.relations.entities = await this.getRelations('ca_object_lots_x_entities', 'entity', 'lot_id', 'entity_id', id);
+				item.relations.entities = await this.getRelations('ca_object_lots_x_entities', 'entity', 'lot_id', 'entity_id', id, true);
 				item.relations.objects = await this.getObjectsByLOT(id);
-				item.object_count = await this.getObjectCount(id);
+				item.object_count = await this.getLOTObjectCount(id);
 				
 			} else if(table == 'ca_collections') {
 				item.relations.objects = await this.getRelations('ca_objects_x_collections', 'object', 'collection_id', 'object_id', id);
 
 			} else if(table == 'ca_occurrences') {
-				item.relations.entities = await this.getRelations('ca_entities_x_occurrences', 'entity', 'occurrence_id', 'entity_id', id);
+				item.relations.entities = await this.getRelations('ca_entities_x_occurrences', 'entity', 'occurrence_id', 'entity_id', id, true);
 				item.relations.objects = await this.getRelations('ca_objects_x_occurrences', 'object', 'occurrence_id', 'object_id', id);
 			}
 			
@@ -361,7 +409,7 @@ class CA {
 		
 	}
 
-	async getObjectCount(lot_id) {
+	async getLOTObjectCount(lot_id) {
 		var sql = "SELECT count(object_id) AS obj_count FROM ca_objects WHERE lot_id = " + lot_id 
 		var count = await this.makeQuery(sql);
 		return count[0].obj_count
@@ -393,7 +441,8 @@ class CA {
 		
 		if(item_table == 'ca_objects'&& label_table == 'object') { // we want idno for objects
 			sql = "SELECT item.idno, rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+"  INNER JOIN " + item_table + " item ON rel." + to_name + " = item." + to_name + " WHERE rel." + from_name + " = ? AND label.is_preferred = 1 ORDER BY item.idno LIMIT 50";
-
+		} else if(item_table == 'ca_objects' && label_table == 'storage_location') { // we want parent_id for locations
+			sql = "SELECT loc.parent_id, rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+" INNER JOIN ca_storage_locations loc ON rel." + to_name+ " = loc.location_id WHERE " + from_name + " = ? AND label.is_preferred = 1 ORDER BY label."+name + " LIMIT 50";
 		} else {
 			sql = "SELECT rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+"  WHERE " + from_name + " = ? AND label.is_preferred = 1 ORDER BY label."+name + " LIMIT 50";
 		}
@@ -411,6 +460,13 @@ class CA {
 					var info = await this.makeQuery(sql, values);
 					if(info.length) r.relation_info = info[0].info;
 				}
+			}
+		}
+		
+		// for storagelocation we want also parent label
+		if(table == 'ca_objects_x_storage_locations') {
+			if(relations.length == 1) {
+				relations[0].parent = await this.getStorageLocationParent(relations[0].parent_id)
 			}
 		}
 		
@@ -439,6 +495,7 @@ class CA {
 
 
 	async getMedia(id, just_primary) {
+		var out = []
 		const zlib = require('zlib');
 		var primary = " ORDER by is_primary";
 		if(just_primary) primary = " WHERE is_primary = 1";
@@ -447,14 +504,22 @@ class CA {
 		
 		for(var representation of representations) {
 			if(representation.media) {
+				var media = {}
 				var bin = representation.media;
-				representation.media = PHPUnserialize.unserialize(zlib.inflateSync(Buffer.from(bin,'base64')).toString())
-				representation.labels = await this.getItemLabels('ca_object_representations', representation.representation_id)
-				representation.attributes = await this.getAttributeValues('ca_object_representations', representation.representation_id)
-				
+				var unserialised  = PHPUnserialize.unserialize(zlib.inflateSync(Buffer.from(bin,'base64')))
+				//media = unserialised
+				media.representation_id = representation.representation_id
+				media.is_primary = representation.is_primary
+				media.labels = await this.getItemLabels('ca_object_representations', representation.representation_id)
+				media.attributes = await this.getAttributeValues('ca_object_representations', representation.representation_id)
+				media.preview = '/' + unserialised.preview.VOLUME + '/' + unserialised.preview.HASH + '/' + unserialised.preview.MAGIC + '_' + unserialised.preview.FILENAME
+				media.tiny = '/' + unserialised.tiny.VOLUME + '/' + unserialised.tiny.HASH + '/' + unserialised.tiny.MAGIC + '_' + unserialised.tiny.FILENAME
+				media.medium = '/' + unserialised.medium.VOLUME + '/' + unserialised.medium.HASH + '/' + unserialised.medium.MAGIC + '_' + unserialised.medium.FILENAME
+				media.page = '/' + unserialised.preview.VOLUME + '/' + unserialised.page.HASH + '/' + unserialised.page.MAGIC + '_' + unserialised.page.FILENAME
+				out.push(media)
 			}
 		}
-		return representations;
+		return out;
 	}
 
 	async getBaseInfo(table, id) {
@@ -510,6 +575,25 @@ class CA {
 		debug(sql)
 		var item = await this.makeQuery(sql);
 		return item;
+	}
+
+
+	async getChanges(table, action, ctx) {
+		var table_num = TABLES[table];
+		var values = [table_num, action]
+		var actions = {'I': 'lisäys', 'D': 'poisto', 'U': 'muutos'}
+		var sql = "SELECT FROM_UNIXTIME(log_datetime) as date, log.logged_row_id, user.user_name FROM ca_change_log log INNER JOIN ca_users user ON user.user_id = log.user_id WHERE log.logged_table_num IN (?) AND changetype = ? ORDER BY log_id DESC LIMIT 10"
+		var changes = await this.makeQuery(sql, values);
+		for(var change of changes) {
+			change.table = getTableName(change.logged_table_num)
+			change.action = actions[change.changetype]
+			var item = await this.getItem(table, change.logged_row_id, 'FI_fi')
+			change.idno = item.idno
+			change.label = item.labels.preferred_label
+			change.typename = item.typename
+		}
+		return changes;
+		
 	}
 
 	checkDateRange(key, dateArr) {
@@ -586,7 +670,7 @@ class CA {
 			if(data.relations.ca_entities) {
 				var relations = [];
 				for(var entity of data.relations.ca_entities) {
-					relations.push({entity_id: entity.entity_id, type_id: entity.link, direction:"ltor"});
+					relations.push({entity_id: entity.entity_id, type_id: entity.type_id, direction:"ltor"});
 				}
 				object.related.ca_entities = relations;
 			}
@@ -594,7 +678,7 @@ class CA {
 			if(data.relations.ca_storage_locations) {
 				var relations = [];
 				for(var rel of data.relations.ca_storage_locations) {
-					relations.push({location_id: rel.location_id, type_id: rel.link, direction:"ltor"});
+					relations.push({location_id: rel.location_id, type_id: rel.type_id, direction:"ltor"});
 				}
 				object.related.ca_storage_locations = relations;
 			}
@@ -602,7 +686,7 @@ class CA {
 			if(data.relations.ca_collections) {
 				var relations = [];
 				for(var rel of data.relations.ca_collections) {
-					relations.push({collection_id: rel.collection_id, type_id: rel.link, direction:"ltor"});
+					relations.push({collection_id: rel.collection_id, type_id: rel.type_id, direction:"ltor"});
 				}
 				object.related.ca_collections = relations;
 			}
@@ -617,14 +701,15 @@ class CA {
 		var result = await requestp(url, {method: "PUT", json: object})
 		// we need to take care of relationship records separately
 		debug(result)
-		var id = result.object_id;
+		var id = null
+		if(table == 'ca_objects') id = result.object_id;
 		if(table == 'ca_object_lots') id = result.lot_id;
 		if(table == 'ca_entities') id = result.entity_id;
 		if(table == 'ca_collections') id = result.collection_id;
 		if(table == 'ca_occurrences') id = result.occurrence_id;
 		//console.log(object.attributes.ca_entities)
 		
-		await this.saveRelationInfo(table, data, id) 
+		await this.saveRelationInfo(table, data, id) // relations to entities only!
 
 		return result;
 		
@@ -669,9 +754,10 @@ class CA {
 	async editItem(table, id, data, token) {
 		if(!id) throw("Item id must be set!")
 		
+		// REST API json
 		var object = {}
 
-		// attributes and labels
+		// add attributes and labels to REST API json
 		if(data.attributes && Object.keys(data.attributes).length > 0) {
 			object.attributes = {}
 			for(var attr in data.attributes) {
@@ -693,7 +779,7 @@ class CA {
 			}
 		}
 		
-		// relations
+		// add relations to REST API json
 		if(data.relations && Object.keys(data.relations).length > 0) {
 			object.remove_relationships = []
 			// if we have relations for table, then we must remove all relations first
@@ -710,9 +796,7 @@ class CA {
 				}
 			}
 		}
-		
 
-		
 		debug("***** DATA TO BE SEND *******")
 		debug(JSON.stringify(object, null, 2))
 		debug("***** DATA TO BE SEND ENDS*******")
@@ -722,6 +806,7 @@ class CA {
 			debug(url)
 			var result = await requestp(url, {method: "PUT", json: object})
 			debug(result)
+			await this.saveRelationInfo(table, data, id)
 			return result;
 		} catch(e) {
 			console.log(e)
@@ -729,29 +814,51 @@ class CA {
 		}
 	}
 
-
+	// TODO: make more generic, now only for lot,object -> entities
 	async saveRelationInfo(table, data, id) {
+		var id_name = 'object_id'
 		var rel_table = 'ca_objects_x_entities'
-		if(table == 'ca_object_lots') 
+		if(table == 'ca_object_lots') { 
 			rel_table = 'ca_object_lots_x_entities'
+			id_name = 'lot_id'
+		}
+		debug('*** RELATION INFO for ' + rel_table +' *** ' + table)
 		
 		// enitity relationships with relation info (API does not save this data)
-		if(data.attributes.ca_entities) {
-			for(var entity of data.attributes.ca_entities) {
+		if(data.relations.ca_entities) {
+			for(var entity of data.relations.ca_entities) {
 				if(entity.relation_info) {
+					
+					// get element_id for info element, abort if not found
+					var element_id = null
+					var getElementsByRestriction = "select restr.table_num AS restriction, restr.type_id, restr.element_id, ele.datatype, ele.element_code from ca_metadata_type_restrictions restr INNER JOIN ca_metadata_elements ele ON ele.element_id = restr.element_id where table_num = " + TABLES[rel_table] + ";"
+					var element= await this.makeQuery(getElementsByRestriction);
+					console.log(element)
+					if(element && element[0] && element[0].element_id) {
+						element_id = element[0].element_id
+					} else {
+						error('relation info element not found')
+						return
+					}
+					
 					debug("******** WRITING RELATION INFO ***********")
 					// 2. after relationship is saved, we must query for relation_id, so that we can save relationship record
-					var sql = "SELECT * FROM " + rel_table + " WHERE entity_id = ? AND object_id = ? AND type_id = ?;"
-					var values = [entity.entity_id, id, entity.link];
-					var relation = await this.makeQuery(sql, values);
+					var sql = "SELECT * FROM " + rel_table + " WHERE entity_id = ? AND " + id_name + " = ? AND type_id = ?;"
+					var values = [entity.entity_id, id, entity.type_id];
 					debug(sql)
+					debug(values)
+					var relation = await this.makeQuery(sql, values);
 					debug(relation)
 				
 					// 3. write relationship info
 					// 3.1 first we create an attribute -> attribute_id
 					// table_num = 59, element_id = 22, locale_id = 1, row_id = relation.relation_id
+					// get info element
+
 					var relation_id = relation[0].relation_id
-					var values = [22,1,59,relation_id]  // HARD CODED !!!!
+					var values = [element_id,1,TABLES[rel_table],relation_id]  
+					debug(sql)
+					debug(values)
 					var sql_insert = "INSERT INTO ca_attributes (element_id, locale_id, table_num, row_id) VALUES (?, ?, ?, ?)"
 					var insert = await this.makeQuery(sql_insert, values);
 					
@@ -761,9 +868,10 @@ class CA {
 					var attribute_id = attribute[0].attribute_id;
 					
 					// 3.3 then we write the attribute value
-					var values = [22, attribute_id, entity.relation_info];
+					var values = [element_id, attribute_id, entity.relation_info];
 					var sql_value = "INSERT INTO ca_attribute_values (element_id, attribute_id, item_id, value_longtext1, value_longtext2, value_blob, value_decimal1, value_decimal2,value_integer1, source_info) VALUES (?,?, NULL, ?, NULL, NULL, NULL, NULL, NULL, '')"
 					debug(sql_value)
+					debug(values)
 					var insert_value = await this.makeQuery(sql_value, values);
 				}
 			} 
@@ -892,6 +1000,8 @@ class CA {
 		var screens = this.groupScreensBy(items,'screen_label');
 		var entity_rels = await this.getRelationInfo('ca_entities')
 		var collection_rels = await this.getRelationInfo('ca_collections')
+		var location_rels = await this.getRelationInfo('ca_storage_locations')
+		var occurrence_rels = await this.getRelationInfo('ca_occurrences')
 		
 		// combine screens with model
 		 Object.keys(screens).forEach(function(screen){
@@ -922,13 +1032,16 @@ class CA {
 						bundle.elements = model.elements[element]
 					} 
 				} 
-
-				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels' || bundle.bundle_name.includes('ca_entities') || bundle.bundle_name.includes('ca_collections')) {
+				//console.log('BUNDLE.NAME :' + bundle.bundle_name)
+				if(bundle.bundle_name in model.elements || bundle.bundle_name == 'preferred_labels' || bundle.bundle_name.includes('ca_')) {
 					if(bundle.bundle_name.includes('ca_entities')) {
 						bundle.settings.relation_info = entity_rels
 					}
 					if(bundle.bundle_name.includes('ca_collections')) {
 						bundle.settings.relation_info = collection_rels
+					}
+					if(bundle.bundle_name.includes('ca_storage_locations')) {
+						bundle.settings.relation_info = location_rels
 					}
 					bundles.push(bundle)
 				} 
@@ -937,14 +1050,7 @@ class CA {
 			}
 			screens[screen].bundles = bundles;
 		    
-			//var bundles = screens[screen].bundles.map(function(bundle) {
-
-
-			//}); 
-			
-			
 		});
-		//screens.Perustiedot.bundles[4] = 'koira'
 		
 		return screens;
 	}
@@ -964,20 +1070,11 @@ class CA {
 
 	// currently only objects_x_entities
 	async getRelationInfo(table) {
-		var relTables = {
-			'ca_entities': 59 // ca_objects_x_entities = 59
-		}
 		
-		if(relTables[table]) {
-			
-			var getForm = "select ui.ui_id, ui.editor_code, ui.editor_type,label.name, label.locale_id, label.description, locale.language,  locale.country FROM ca_editor_uis ui INNER JOIN ca_editor_ui_labels label ON label.ui_id = ui.ui_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id WHERE ui.editor_type = 59 AND label.locale_id = 1;"
-			
-			var getScreens = "select bundle.settings, bundle.placement_code, bundle.bundle_name, name AS screen_label, screen.screen_id FROM ca_editor_ui_screens screen INNER JOIN ca_editor_ui_screen_labels l ON l.screen_id = screen.screen_id INNER JOIN ca_editor_ui_bundle_placements bundle  ON bundle.screen_id = screen.screen_id  WHERE  ui_id = 26 ORDER BY screen.rank;"
-			
-			var getElementsFromScreen = "select * from ca_editor_ui_bundle_placements where screen_id = 84;"
+		if(TABLES[table]) {
 			
 			// get elements for objects_x_entities
-			var getElementsByRestriction = "select restr.table_num AS restriction, restr.type_id, restr.element_id, ele.datatype, ele.element_code from ca_metadata_type_restrictions restr INNER JOIN ca_metadata_elements ele ON ele.element_id = restr.element_id where table_num = " + relTables[table] + ";"
+			var getElementsByRestriction = "select restr.table_num AS restriction, restr.type_id, restr.element_id, ele.datatype, ele.element_code from ca_metadata_type_restrictions restr INNER JOIN ca_metadata_elements ele ON ele.element_id = restr.element_id where table_num = " + TABLES[table] + ";"
 			
 			var elements = await this.makeQuery(getElementsByRestriction);
 			for(var ele of elements) {

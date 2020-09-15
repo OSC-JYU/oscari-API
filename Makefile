@@ -1,4 +1,4 @@
-
+IMPORT := /home/arihayri/Pictures
 
 build:
 	docker build -t osc/oscari-api:latest .
@@ -13,10 +13,11 @@ start:
 	docker run -d --name oscari-api \
 		-p 8080:8080 \
 		--network oscari-net \
-		--volume collectiveaccess-data:/import \
+		--mount type=bind,source=$(IMPORT),target=/import \
 		--volume oscari-data:/files \
 		-e CA_URL=http://collectiveaccess/providence \
 		-e CA_IMPORT=/var/www/providence/import \
+		-e DOCKER_VOLUME=yes \
 		-e DB_HOST=mariadb \
 		-e DB_USER=root \
 		-e DB_PW=root \

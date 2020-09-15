@@ -183,16 +183,24 @@ router.post('/api/ca/login', async function(ctx) {
 
 router.get('/api/ca/status', async function(ctx) {
 
-
-	if(config.authentication == 'shibboleth') {
-		if(ctx.session.user) {
-			ctx.body = {'user': ctx.get('mail'), 'token': 'yes' }
-			
-		} else ctx.body = {'user': ctx.get('mail'), 'token': 'no'}
-	} else if(config.authentication == 'collectiveaccess') {
-		debug(ctx.session.user)
-		if(ctx.session.user && ctx.session.user.username) ctx.body = {'user': ctx.session.user.username, 'token': 'yes'}
-		else ctx.body = {'user': ctx.session.user.username, 'token': 'no'}
+	if(!ctx.session.user) {
+		ctx.status = 401;
+		ctx.body = {}
+	}
+	try {
+		var url =config.collectiveaccess.url + '/service.php/auth/login?authToken=' + ctx.session.user.token
+		var result = await requestp(url)
+		if(config.authentication == 'shibboleth') {
+			if(ctx.session.user) {
+				ctx.body = {'user': ctx.get('mail'), 'token': 'yes' }
+			}
+				
+		} else if(config.authentication == 'collectiveaccess') {
+			if(ctx.session.user.username) ctx.body = {'user': ctx.session.user.username, 'token': 'yes'}
+		}
+	} catch(e) {
+		ctx.status = 401;
+		ctx.body = {}
 	}
 
 })
@@ -205,6 +213,10 @@ router.get('/api/ca/locales', async function(ctx, next) {
 
 router.get('/api/ca/elements', async function(ctx, next) {
 	ctx.body = ca.getElements();
+})
+
+router.get('/api/ca/storage_locations', async function(ctx, next) {
+	ctx.body = await ca.getStorageLocations(ctx.query.parent);
 })
 
 
@@ -225,10 +237,9 @@ router.get('/api/ca/objects/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_objects", ctx.params.id, getLocale(ctx))
 	if(ctx.query.form){
-		var form = await ca.getInputFormAndModel(ctx, 'objects_ui', 'esine');
+		var form = await ca.getInputFormAndModel(ctx, ctx.query.form, item.typename);
 		var out = {screens: {}}
 		for(var screen in form.screens) {
-			console.log(screen)
 			out.screens[screen] = []
 			if(form.screens[screen].bundles) {
 				for(var b of form.screens[screen].bundles) {
@@ -252,9 +263,10 @@ router.get('/api/ca/entities/:id', async function(ctx, next) {
 })
 
 
-router.get('/api/ca/locations/:id', async function(ctx, next) {
+router.get('/api/ca/storage_locations/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_storage_locations", ctx.params.id, getLocale(ctx))
+	if(item && item.parent_id) item.parent = await ca.getStorageLocationParent(item.parent_id)
 	ctx.body = item;
 })
 
@@ -309,6 +321,15 @@ router.put('/api/ca/objects/:id', async function(ctx, next) {
 	}
 })
 
+router.put('/api/ca/entities/:id', async function(ctx, next) {
+
+	try {
+		result = await ca.editItem("ca_entities", ctx.params.id, ctx.request.body, ctx.session.user.token);
+		ctx.body = result;
+	} catch(e) {
+		throw("Entity editing failed!", e)
+	}
+})
 
 router.put('/api/ca/entities', async function(ctx, next) {
 
@@ -320,24 +341,6 @@ router.put('/api/ca/entities', async function(ctx, next) {
 	}
 })
 
-router.put('/api/ca/entities/:id', async function(ctx, next) {
-
-	try {
-		result = await ca.editItem("ca_entities", ctx.params.id, ctx.request.body, ctx.session.user.token);
-		ctx.body = result;
-	} catch(e) {
-		throw("Entity editing failed!", e)
-	}
-})
-
-router.put('/api/ca/object_lots', async function(ctx, next) {
-	try {
-		result = await ca.createItem("ca_object_lots", ctx.request.body, ctx.session.user.token);
-		ctx.body = result;
-	} catch(e) {
-		throw("Object lot creation failed!", e)
-	}
-})
 
 router.put('/api/ca/object_lots/:id', async function(ctx, next) {
 
@@ -348,6 +351,17 @@ router.put('/api/ca/object_lots/:id', async function(ctx, next) {
 		throw("Object LOT editing failed!", e)
 	}
 })
+
+
+router.put('/api/ca/object_lots', async function(ctx, next) {
+	try {
+		result = await ca.createItem("ca_object_lots", ctx.request.body, ctx.session.user.token);
+		ctx.body = result;
+	} catch(e) {
+		throw("Object lot creation failed!", e)
+	}
+})
+
 
 
 router.put('/api/ca/collections', async function(ctx, next) {
@@ -497,6 +511,7 @@ router.get('/api/ca/find', async function(ctx) {
 	var adv = {
 		"bundles": {
 			"description" : {},
+			"ca_storage_locations.parent.preferred_labels.name":{},
 			"yleisnimi" : {"convertCodesToDisplayText": true},
 			"ca_object_representations.media.tiny" : {"returnAsArray" : true}
 		}
@@ -512,7 +527,7 @@ router.get('/api/ca/find', async function(ctx) {
 	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var occurrences_url = config.collectiveaccess.url + "/service.php/find/ca_occurrences?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 
-	console.log(objects_url)
+	console.log(locations_url)
 
 	const [objects, entities, lots, collections, locations, occurrences] = await Promise.all([
 		requestp(objects_url + cacheRand(), {json:adv}),
@@ -522,8 +537,7 @@ router.get('/api/ca/find', async function(ctx) {
 		requestp(locations_url + cacheRand(), {json:adv}),
 		requestp(occurrences_url + cacheRand(), {json:adv})
 	]);
-	console.log(objects)
-	console.log(entities)
+
 	/*
 	.catch(function(err) {
 	  console.log(err.message); // some coding error in handling happened
@@ -544,6 +558,9 @@ router.get('/api/ca/find/:table', async function(ctx) {
 		"bundles": {
 			"idno": {},
 			"description" : {},
+			"pvm_cont": {},
+			"ca_storage_locations.preferred_labels.name":{},
+			"ca_storage_locations.parent.preferred_labels.name":{},
 			"yleisnimi" : {"convertCodesToDisplayText": true},
 			"type_id" : {"convertCodesToDisplayText": true},
 			"ca_object_representations.media.medium" : {}
@@ -623,6 +640,15 @@ router.get('/api/ca/browse/:table', async function(ctx) {
 	ctx.body = {facets: available_facets, result: result};
 	
 })
+
+/*********************************************************************************
+ *  					edit logs
+ * *******************************************************************************/
+
+router.get('/api/ca/changes', async function(ctx) {
+	ctx.body = await ca.getChanges('ca_objects', 'I', ctx)
+})
+
 
 
 /*********************************************************************************
@@ -747,7 +773,7 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 		// copy file to import dir of CA
 		var extensions = ['tif', 'tiff', 'jpg', 'png','jpeg']
 		var splitted = filename.split('.')
-		if(extensions.includes(splited[splitted.length - 1].toLowerCase())) {
+		if(extensions.includes(splitted[splitted.length - 1].toLowerCase())) {
 			await pipeline (
 				fs.createReadStream(filePath),
 				fs.createWriteStream(path.join('/import', filename))
@@ -955,8 +981,9 @@ async function loadConfig() {
 		const file = await fsPromises.readFile('./config.json', 'utf8');
 		console.log('done')
 		config = JSON.parse(file);
-		config.collectiveaccess.url = process.env.CA_URL;
-		config.collectiveaccess.import_path = process.env.CA_IMPORT;
+		// override defaults with env variables
+		if(process.env.CA_URL) config.collectiveaccess.url = process.env.CA_URL;
+		if(process.env.CA_IMPORT) config.collectiveaccess.import_path = process.env.CA_IMPORT;
 	} catch(e) {
 		console.log('config file not found!')
 		process.exit(1);
