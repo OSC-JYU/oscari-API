@@ -112,7 +112,7 @@ app.use(async (ctx, next) => {
 		ctx.headers['mail'] = config.shibboleth.dummyUser;
 	}
 	
-	if(ctx.path !== '/api/ca/login' && ctx.method !== 'POST') {
+	if(ctx.path !== '/api/ca/login' && ctx.path !== '/api/ca/config' && ctx.method !== 'POST') {
 		if (isValidUser(ctx)) {
 			await next()
 		} else {
@@ -143,6 +143,9 @@ router.post('/api/ca/login', async function(ctx) {
 
 	// create login object for CollectiveAccess
 	if(config.authentication == 'shibboleth') {
+		if(!config.shibboleth.users[ctx.headers['mail']])
+			throw('Login failed')
+			
 		var user = config.shibboleth.users[ctx.headers['mail']]
 		var auth = {
 			auth: {
@@ -166,7 +169,7 @@ router.post('/api/ca/login', async function(ctx) {
 		debug(login_json)
 		var user = {username: auth.auth.username, user_id: ca_user, token: login_json.authToken}
 		ctx.session.user = user;
-		ctx.body = {user: auth.auth.username}
+		ctx.body = {user: auth.auth.username, auth: config.authentication}
 	} catch(e) {
 		debug(e)
 		throw('Login failed')
@@ -180,12 +183,11 @@ router.post('/api/ca/login', async function(ctx) {
 })
 
 
-
-router.get('/api/ca/status', async function(ctx) {
+router.get('/api/ca/login', async function(ctx) {
 
 	if(!ctx.session.user) {
 		ctx.status = 401;
-		ctx.body = {}
+		ctx.body = {auth: config.authentication}
 	}
 	try {
 		var url =config.collectiveaccess.url + '/service.php/auth/login?authToken=' + ctx.session.user.token
@@ -196,13 +198,25 @@ router.get('/api/ca/status', async function(ctx) {
 			}
 				
 		} else if(config.authentication == 'collectiveaccess') {
-			if(ctx.session.user.username) ctx.body = {'user': ctx.session.user.username, 'token': 'yes'}
+			if(ctx.session.user.username) ctx.body = {
+				'user': ctx.session.user.username, 
+				'auth': config.authentication,
+				'token': 'yes'}
 		}
 	} catch(e) {
 		ctx.status = 401;
-		ctx.body = {}
+		ctx.body = {
+			'error': 'not logged in',
+			'auth': config.authentication
+		}
 	}
 
+})
+
+
+// login user based on Shibboleth user name
+router.get('/api/ca/config', function(ctx) {
+	ctx.body = {auth: config.authentication}
 })
 
 
@@ -314,7 +328,7 @@ router.put('/api/ca/objects', async function(ctx, next) {
 router.put('/api/ca/objects/:id', async function(ctx, next) {
 
 	try {
-		result = await ca.editItem("ca_objects", ctx.params.id, ctx.request.body, ctx.session.user.token);
+		result = await ca.editItem("ca_objects", ctx.params.id, ctx.request.body, ctx.session.user.token, ctx.session.user.user_id);
 		ctx.body = result;
 	} catch(e) {
 		throw("Object editing failed!", e)
@@ -646,9 +660,8 @@ router.get('/api/ca/browse/:table', async function(ctx) {
  * *******************************************************************************/
 
 router.get('/api/ca/changes', async function(ctx) {
-	ctx.body = await ca.getChanges('ca_objects', 'I', ctx)
+	ctx.body = await ca.getChanges('ca_objects', 'U', ctx)
 })
-
 
 
 /*********************************************************************************
@@ -984,6 +997,7 @@ async function loadConfig() {
 		// override defaults with env variables
 		if(process.env.CA_URL) config.collectiveaccess.url = process.env.CA_URL;
 		if(process.env.CA_IMPORT) config.collectiveaccess.import_path = process.env.CA_IMPORT;
+		if(process.env.CA_AUTH) config.authentication = process.env.CA_AUTH;
 	} catch(e) {
 		console.log('config file not found!')
 		process.exit(1);

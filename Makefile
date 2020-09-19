@@ -17,6 +17,7 @@ start:
 		--volume oscari-data:/files \
 		-e CA_URL=http://collectiveaccess/providence \
 		-e CA_IMPORT=/var/www/providence/import \
+		-e CA_AUTH=collectiveaccess \
 		-e DOCKER_VOLUME=yes \
 		-e DB_HOST=mariadb \
 		-e DB_USER=root \

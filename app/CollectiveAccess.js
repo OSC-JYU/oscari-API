@@ -579,10 +579,12 @@ class CA {
 
 
 	async getChanges(table, action, ctx) {
+		
 		var table_num = TABLES[table];
-		var values = [table_num, action]
+		var values = [table_num, ctx.session.user.user_id]
 		var actions = {'I': 'lisäys', 'D': 'poisto', 'U': 'muutos'}
-		var sql = "SELECT FROM_UNIXTIME(log_datetime) as date, log.logged_row_id, user.user_name FROM ca_change_log log INNER JOIN ca_users user ON user.user_id = log.user_id WHERE log.logged_table_num IN (?) AND changetype = ? ORDER BY log_id DESC LIMIT 10"
+		var sql = "SELECT * FROM (SELECT  FROM_UNIXTIME(log_datetime) as date, log.logged_row_id, user.user_name, log.changetype FROM ca_change_log log INNER JOIN ca_users user ON user.user_id = log.user_id WHERE log.logged_table_num IN (?) AND log.user_id = ?  ORDER BY log_id DESC LIMIT 10) as sub GROUP by logged_row_id ORDER BY date DESC;"
+
 		var changes = await this.makeQuery(sql, values);
 		for(var change of changes) {
 			change.table = getTableName(change.logged_table_num)
@@ -751,7 +753,7 @@ class CA {
 	}
 
 
-	async editItem(table, id, data, token) {
+	async editItem(table, id, data, token, user_id) {
 		if(!id) throw("Item id must be set!")
 		
 		// REST API json
@@ -807,12 +809,27 @@ class CA {
 			var result = await requestp(url, {method: "PUT", json: object})
 			debug(result)
 			await this.saveRelationInfo(table, data, id)
+			if(user_id) await this.logChange(table, id, user_id)
 			return result;
 		} catch(e) {
 			console.log(e)
 			throw(e);
 		}
 	}
+
+
+	async logChange(table, row_id, user_id) {
+		var values = [user_id, TABLES[table], row_id]
+		var sql = "insert into ca_change_log (log_datetime, user_id, changetype, logged_table_num, logged_row_id, rolledback) VALUES  (UNIX_TIMESTAMP(),?,'U',?,?,0);"
+		try {
+			await this.makeQuery(sql, values);
+		} catch(e) {
+			error('change log write failed')
+			debug(e)
+		}
+	}
+	
+
 
 	// TODO: make more generic, now only for lot,object -> entities
 	async saveRelationInfo(table, data, id) {
