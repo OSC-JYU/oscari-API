@@ -112,7 +112,7 @@ class CA {
 
 
 	async getSets(user_id) {
-		var sql = "select sets.set_code, sets.set_id, label.name, CONCAT(language,'_',country) AS locale FROM ca_sets sets INNER JOIN ca_set_labels label ON sets.set_id = label.set_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id WHERE user_id = ?;" 
+		var sql = "select sets.set_code, sets.set_id, label.name, CONCAT(language,'_',country) AS locale FROM ca_sets sets INNER JOIN ca_set_labels label ON sets.set_id = label.set_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id WHERE user_id = ? AND deleted = 0 ORDER BY label.name;" 
 		var sets = await this.makeQuery(sql, user_id)
 		return groupSetsBy(sets, 'set_code');
 	}
@@ -120,20 +120,69 @@ class CA {
 
 	async getSet(code) {
 		var out = {}
-		var sql = "SELECT set_id FROM ca_sets WHERE set_code = ?"; 
+		var sql = "SELECT set_id, set_code FROM ca_sets WHERE set_code = ?"; 
 		var set_id = await this.makeQuery(sql, code);
 		if(Array.isArray(set_id) && set_id.length == 1) { 
+			out.code = set_id[0].set_code
 			var sql = "SELECT row_id, table_num FROM ca_set_items WHERE set_id = ?"; 
 			var items = await this.makeQuery(sql, set_id[0].set_id);
 			out.count = items.length
 			out.items = items
 			// let's map table nums to table names
 			for(var item of out.items) {
-				item.type = getTableName(item.table_num)
+				//item.type = getTableName(item.table_num)
 				item.media = await this.getMedia(item.row_id);
+				item.labels = await this.getItemLabels('ca_objects', item.row_id) 
 				//item.data = await this.getItem(item.type, item.row_id, 'FI_fi')
 			}
 			return out;
+		}
+	}
+
+
+	async createSet(body, table, locale, ctx) {
+		var data = JSON.parse(body)
+		console.log(data.name)
+		if(!data.name) throw('Setin nimi pitää antaa')
+		var sanitize = require("sanitize-filename");
+		var clean_name = sanitize(data.name)
+		clean_name = clean_name.replace(/ /g, '_')
+		var table_num = TABLES[table]
+		// values = [user_id, set_code, table_num] objects only
+		var values = [ctx.session.user.user_id, clean_name, 57]
+		var search = await this.makeQuery("SELECT set_code FROM ca_sets WHERE set_code = ?", [clean_name]);
+		if(search.length) throw('Setti ' + clean_name + ' on jo olemassa')
+		var sql = "INSERT INTO ca_sets (hier_set_id, user_id, type_id, commenting_status, tagging_status, rating_status, set_code, table_num, access, status, hier_left, hier_right, deleted, rank) VALUES (0,?,12,0,0,0,?,?,0,0,1.0,429.00,0,0);"
+		try {
+			await this.makeQuery(sql, values);
+			var id = await this.makeQuery("select MAX(set_id) AS id FROM ca_sets", []);
+			console.log(id)
+			var set_id = id[0].id;
+			await this.makeQuery("UPDATE ca_sets SET hier_set_id = set_id, rank = set_id WHERE set_id = LAST_INSERT_ID()", [])
+			var label_values = [set_id, 1, data.name]
+			var label_sql = "INSERT INTO ca_set_labels (set_id, locale_id, name) VALUES (?,?,?);"
+			try {
+				await this.makeQuery(label_sql, label_values);
+				return set_id
+			} catch(e) {
+				debug(e)
+				throw('creating set failed')
+			}
+		} catch(e) {
+			debug(e)
+			throw('creating set failed')
+		}
+	}
+
+
+	async deleteSet(set_id, ctx) {
+		var values = [set_id, ctx.session.user.user_id]
+		var sql = "UPDATE ca_sets SET deleted = 1 WHERE set_id = ? and user_id = ?;"
+		try {
+			await this.makeQuery(sql, values);
+		} catch(e) {
+			debug(e)
+			throw('removing set failed')
 		}
 	}
 
@@ -816,6 +865,8 @@ class CA {
 			throw(e);
 		}
 	}
+
+
 
 
 	async logChange(table, row_id, user_id) {

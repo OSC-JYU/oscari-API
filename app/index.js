@@ -467,8 +467,23 @@ router.get('/api/ca/sets', async function(ctx, next) {
 	ctx.body = sets;
 })
 
+router.post('/api/ca/sets', async function(ctx, next) {
+	var newset = await ca.createSet(ctx.request.body, 'ca_objects', getLocale(ctx), ctx)
+	ctx.body = newset;
+})
+
 router.get('/api/ca/sets/:name', async function(ctx, next) {
 	var items = await ca.getSet(ctx.params.name, getLocale(ctx))
+	ctx.body = items;
+})
+
+router.put('/api/ca/sets/:name/items', async function(ctx, next) {
+	var items = await ca.addSetItems(ctx.params.name, ctx.body, getLocale(ctx))
+	ctx.body = items;
+})
+
+router.delete('/api/ca/sets/:name/items/:item', async function(ctx, next) {
+	var items = await ca.removeSetItem(ctx.params.name, ctx.params.item)
 	ctx.body = items;
 })
 
