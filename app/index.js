@@ -111,7 +111,7 @@ app.use(async (ctx, next) => {
 	if(config.authentication == 'shibboleth' && config.shibboleth.dummyUser) {
 		ctx.headers['mail'] = config.shibboleth.dummyUser;
 	}
-	
+
 	if(ctx.path !== '/api/ca/login' && ctx.path !== '/api/ca/config' && ctx.method !== 'POST') {
 		if (isValidUser(ctx)) {
 			await next()
@@ -145,7 +145,7 @@ router.post('/api/ca/login', async function(ctx) {
 	if(config.authentication == 'shibboleth') {
 		if(!config.shibboleth.users[ctx.headers['mail']])
 			throw('Login failed')
-			
+
 		var user = config.shibboleth.users[ctx.headers['mail']]
 		var auth = {
 			auth: {
@@ -174,7 +174,7 @@ router.post('/api/ca/login', async function(ctx) {
 		debug(e)
 		throw('Login failed')
 	}
-	
+
 
 	//sessions[ctx.get('mail')] = ca_user;
 	//debug(login_json)
@@ -196,10 +196,10 @@ router.get('/api/ca/login', async function(ctx) {
 			if(ctx.session.user) {
 				ctx.body = {'user': ctx.get('mail'), 'token': 'yes' }
 			}
-				
+
 		} else if(config.authentication == 'collectiveaccess') {
 			if(ctx.session.user.username) ctx.body = {
-				'user': ctx.session.user.username, 
+				'user': ctx.session.user.username,
 				'auth': config.authentication,
 				'token': 'yes'}
 		}
@@ -243,7 +243,7 @@ router.get('/api/ca/object_lots/:id', async function(ctx) {
 	//var result = await requestp(url)
 	var item = await ca.getItem("ca_object_lots", ctx.params.id, getLocale(ctx))
 	ctx.body = item;
-	
+
 })
 
 
@@ -259,7 +259,7 @@ router.get('/api/ca/objects/:id', async function(ctx, next) {
 				for(var b of form.screens[screen].bundles) {
 					var b_obj = {'name': b.bundle_name}
 					if(item.elements[b.bundle_name]) b_obj.element = item.elements[b.bundle_name]
-					out.screens[screen].push(b_obj) 
+					out.screens[screen].push(b_obj)
 				}
 			}
 		}
@@ -298,7 +298,7 @@ router.get('/api/ca/occurrences/:id', async function(ctx, next) {
 				for(var b of form.screens[screen].bundles) {
 					var b_obj = {'name': b.bundle_name}
 					if(item.elements[b.bundle_name]) b_obj.element = item.elements[b.bundle_name]
-					out.screens[screen].push(b_obj) 
+					out.screens[screen].push(b_obj)
 				}
 			}
 		}
@@ -478,7 +478,7 @@ router.get('/api/ca/sets/:name', async function(ctx, next) {
 })
 
 router.put('/api/ca/sets/:name/items', async function(ctx, next) {
-	var items = await ca.addSetItems(ctx.params.name, ctx.body, getLocale(ctx))
+	var items = await ca.createSetItems(ctx.params.name, ctx.request.body, getLocale(ctx))
 	ctx.body = items;
 })
 
@@ -511,7 +511,7 @@ router.get('/api/ca/tables/:table/models/:model/', async function(ctx) {
  * *******************************************************************************/
 
 router.get('/api/ca/displays', async function(ctx) {
-	var sql = "SELECT display.display_code, display.table_num, label.name FROM ca_bundle_displays display INNER JOIN ca_bundle_display_labels label ON label.display_id = display.display_id;" 
+	var sql = "SELECT display.display_code, display.table_num, label.name FROM ca_bundle_displays display INNER JOIN ca_bundle_display_labels label ON label.display_id = display.display_id;"
 	var displays = await makeQuery(sql)
 	var displays_with_tables = setTableNames(displays, 'table_num');
 	ctx.body = groupBy(displays_with_tables, 'table_num', 'displays');
@@ -520,7 +520,7 @@ router.get('/api/ca/displays', async function(ctx) {
 
 
 router.get('/api/ca/displays/:display_code', async function(ctx) {
-	var sql = "SELECT display.display_id, display.display_code, display.table_num, label.name FROM ca_bundle_displays display INNER JOIN ca_bundle_display_labels label ON label.display_id = display.display_id WHERE display.display_code = '"+ctx.params.display_code+"';" 
+	var sql = "SELECT display.display_id, display.display_code, display.table_num, label.name FROM ca_bundle_displays display INNER JOIN ca_bundle_display_labels label ON label.display_id = display.display_id WHERE display.display_code = '"+ctx.params.display_code+"';"
 	var display = await makeQuery(sql)
 	var sql_bundles = "select bundle_name from ca_bundle_display_placements WHERE display_id = "+display[0].display_id+"; "
 	display[0].bundles = await makeQuery(sql_bundles)
@@ -535,7 +535,7 @@ router.get('/api/ca/displays/:display_code', async function(ctx) {
  * *******************************************************************************/
 
 router.get('/api/ca/find', async function(ctx) {
-	
+
 	// we want description
 	var adv = {
 		"bundles": {
@@ -545,11 +545,11 @@ router.get('/api/ca/find', async function(ctx) {
 			"ca_object_representations.media.tiny" : {"returnAsArray" : true}
 		}
 	}
-	
+
 	//if(!ctx.query.q.includes('*')) ctx.query.q = ctx.query.q + '*'
 	var paging = ca.getPaging(ctx);
 
-	var objects_url = config.collectiveaccess.url + "/service.php/find/ca_objects?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token ;	
+	var objects_url = config.collectiveaccess.url + "/service.php/find/ca_objects?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token ;
 	var entities_url = config.collectiveaccess.url + "/service.php/find/ca_entities?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var lots_url = config.collectiveaccess.url + "/service.php/find/ca_object_lots?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
@@ -580,8 +580,8 @@ router.get('/api/ca/find', async function(ctx) {
 
 
 router.get('/api/ca/find/:table', async function(ctx) {
-	
-	
+
+
 	// we want description
 	var adv = {
 		"bundles": {
@@ -638,7 +638,7 @@ router.get('/api/ca/browse/:table', async function(ctx) {
 	var result = {};
 	var available_facets = {};
 	var url = config.collectiveaccess.url + "/service.php/browse/ca_"+ctx.params.table+"?&pretty=1&authToken=" + ctx.session.user.token + "&limit=100";
-	
+
 	// if there is query, then make search with criteria
 	if(Object.keys(ctx.query).length) {
 		var facets = {}
@@ -665,9 +665,9 @@ router.get('/api/ca/browse/:table', async function(ctx) {
 	} else {
 		available_facets = await requestp(url, {method:"OPTIONS", json: true})
 	}
-	
+
 	ctx.body = {facets: available_facets, result: result};
-	
+
 })
 
 /*********************************************************************************
@@ -734,7 +734,7 @@ router.put('/api/ca/object_lots/:id/:type', async function(ctx) {
 	var url = config.collectiveaccess.url + "/service.php/item/" + ctx.params.type + "?pretty=1&authToken=" + ctx.session.user.token
 	var result = await requestp(url, {method: "PUT",json:{intrinsic_fields: {type_id: 91}}})
 	ctx.body = result;
-	
+
 })
 */
 
@@ -745,20 +745,20 @@ router.put('/api/ca/object_lots/:id/:type', async function(ctx) {
  * *******************************************************************************/
 
 /*
- * 
- * - re-name file 
+ *
+ * - re-name file
  * - move to nfsdata/data/ca_media
  * - if image -> generate smaller jpg -> copy jpg to CA's import directory (
  * - if PDF -> copy original file to CA's import directory
  * - call object representation API
- * 
+ *
  */
 
 router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
-	
+
 	var sanitize = require("sanitize-filename");
 	var os = require("os")
-	
+
 	var body = {}
 	// get item data (idno, lot_id)
 	var item = null;
@@ -770,7 +770,7 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 		console.log(e)
 		throw(e)
 	}
-	
+
 	// create filename
 	const file = ctx.request.files.file;
 	var filename = sanitize(file.name)
@@ -779,7 +779,7 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 	var uploadPath = path.join('/files', item.lot_id.toString())
 	var filePath = path.join(uploadPath, filename)
 	console.log('UPLOADing to /files/' + filename)
-	
+
 	// check that LOT dir does exist
 	if (!fs.existsSync(uploadPath)) {
 		console.log('no ' + uploadPath)
@@ -797,7 +797,7 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 			fs.createReadStream(file.path),
 			fs.createWriteStream(filePath)
 		);
-		
+
 		// copy file to import dir of CA
 		var extensions = ['tif', 'tiff', 'jpg', 'png','jpeg']
 		var splitted = filename.split('.')
@@ -808,7 +808,7 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 			);
 			// add file to CollectiveAccess via API
 			var result = await ca.createRepresentation(config.collectiveaccess.import_path, filename,  filePath, item.id, ctx.session.user.token)
-			
+
 			// remove file from CA import dir
 			try {
 			  fs.unlinkSync(path.join('/import', filename))
@@ -843,7 +843,7 @@ router.get('/api/ca/files/:dir/:file', async function(ctx) {
 router.get('/api/nc/previews/:dir', async function(ctx) {
 	//if(!ctx.query.dir) var dir = rootDir
 	var dir = path.join(rootDir, ctx.params.dir);
-	
+
 	debug("processing " + dir)
 	var files = [];
 	try {
@@ -872,7 +872,7 @@ router.get('/api/nc/previews/:dir', async function(ctx) {
 			}
 		}
 		ctx.body = processed;
-		
+
 	} catch (e) {
 		throw(e)
 	}
@@ -952,7 +952,7 @@ router.post('/api/nc/transfer/:dir/:file/nc', async function(ctx) {
 		debug(e)
 		throw("Tiedoston siirto ei onnistunut!")
 	}
-	
+
 })
 
 
@@ -1149,7 +1149,7 @@ async function init() {
 			password: config.nextcloud.password
 		}
 	);
-	
+
 	// start the show
 	var server = app.listen(8080, function () {
 	   var host = server.address().address
