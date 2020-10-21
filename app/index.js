@@ -19,6 +19,7 @@ var debug			= require('debug')('debug');
 var debugRouter		= require('debug')('router');
 
 var CA				= require('./CollectiveAccess.js');
+var Media			= require('./Media.js');
 
 const STATIC_PATH = 'public'
 var rootDir = "/OSCARI-siirto"
@@ -43,6 +44,7 @@ const TABLES = {
 let config;
 let client;
 let ca;
+let media;
 let sessions = {};
 
 const pipeline = util.promisify(stream.pipeline);
@@ -108,11 +110,18 @@ router.get('/', function(ctx) {
 // auth
 app.use(async (ctx, next) => {
 	// dummyUser is for testing without Shibboleth
-	if(config.authentication == 'shibboleth' && config.shibboleth.dummyUser) {
-		ctx.headers['mail'] = config.shibboleth.dummyUser;
+	if(config.authentication == 'dummyUser' && config.shibboleth.dummyUser) {
+		// check that dummyUser is not used in production
+		if(ctx.headers[config.shibboleth.headerId]) throw('Configuration error: Can not use dummyUser on shibboleth install!')
+		else ctx.headers[config.shibboleth.headerId] = config.shibboleth.dummyUser;
 	}
-
-	if(ctx.path !== '/api/ca/login' && ctx.path !== '/api/ca/config' && ctx.method !== 'POST') {
+	
+	// always accessible paths
+	 if(ctx.path == '/api/ca/login' || ctx.path == '/api/ca/config' ) {
+		await next()
+		
+	// all other paths are restricted
+	} else {
 		if (isValidUser(ctx)) {
 			await next()
 		} else {
@@ -120,8 +129,6 @@ app.use(async (ctx, next) => {
 			ctx.status = 401;
 			ctx.body = {'error': 'ei käyttöoikeuksia'};
 		}
-	} else {
-		await next();
 	}
 
 })
@@ -141,12 +148,20 @@ router.post('/api/ca/logout', async function(ctx) {
 // login user based on Shibboleth user name
 router.post('/api/ca/login', async function(ctx) {
 
-	// create login object for CollectiveAccess
-	if(config.authentication == 'shibboleth') {
-		if(!config.shibboleth.users[ctx.headers['mail']])
+	if(config.authentication == 'dummyUser') {
+		var user = config.shibboleth.users[config.shibboleth['dummyUser']]
+		var auth = {
+			auth: {
+				username: user.ca_username,
+				password: user.ca_password
+			}
+		}
+		
+	} else if(config.authentication == 'shibboleth') {
+		if(!config.shibboleth.users[ctx.headers[config.shibboleth.headerId]])
 			throw('Login failed')
 
-		var user = config.shibboleth.users[ctx.headers['mail']]
+		var user = config.shibboleth.users[ctx.headers[config.shibboleth.headerId]]
 		var auth = {
 			auth: {
 				username: user.ca_username,
@@ -161,9 +176,11 @@ router.post('/api/ca/login', async function(ctx) {
 			}
 		}
 	}
+	debug(auth)
 	var ca_user = await ca.getUserId(auth.auth.username); // we want internal user ID
 	debug(config.collectiveaccess.url)
 	try {
+		debug(config.collectiveaccess.url + "/service.php/auth/login")
 		var login_result = await requestp(config.collectiveaccess.url + "/service.php/auth/login", auth)
 		var login_json = JSON.parse(login_result);
 		debug(login_json)
@@ -176,7 +193,6 @@ router.post('/api/ca/login', async function(ctx) {
 	}
 
 
-	//sessions[ctx.get('mail')] = ca_user;
 	//debug(login_json)
 
 
@@ -192,9 +208,9 @@ router.get('/api/ca/login', async function(ctx) {
 	try {
 		var url =config.collectiveaccess.url + '/service.php/auth/login?authToken=' + ctx.session.user.token
 		var result = await requestp(url)
-		if(config.authentication == 'shibboleth') {
+		if(config.authentication == 'shibboleth' || config.authentication == 'dummyUser') {
 			if(ctx.session.user) {
-				ctx.body = {'user': ctx.get('mail'), 'token': 'yes' }
+				ctx.body = {'user': ctx.get(config.shibboleth.headerId), 'token': 'yes' }
 			}
 
 		} else if(config.authentication == 'collectiveaccess') {
@@ -407,6 +423,16 @@ router.get('/api/ca/representations/:id', async function(ctx, next) {
 
 })
 
+router.put('/api/ca/representations/:id', async function(ctx, next) {
+	try {
+		result = await ca.editItem("ca_object_representations", ctx.params.id, ctx.request.body, ctx.session.user.token, ctx.session.user.user_id);
+		ctx.body = result;
+	} catch(e) {
+		throw("Representation editing failed!", e)
+	}
+
+})
+
 
 /*********************************************************************************
  *  					metadata elements
@@ -477,6 +503,12 @@ router.get('/api/ca/sets/:name', async function(ctx, next) {
 	ctx.body = items;
 })
 
+router.delete('/api/ca/sets/:name', async function(ctx, next) {
+	var items = await ca.deleteSet(ctx.params.name, ctx)
+	ctx.body = items;
+})
+
+
 router.put('/api/ca/sets/:name/items', async function(ctx, next) {
 	var items = await ca.createSetItems(ctx.params.name, ctx.request.body, getLocale(ctx))
 	ctx.body = items;
@@ -486,6 +518,7 @@ router.delete('/api/ca/sets/:name/items/:item', async function(ctx, next) {
 	var items = await ca.removeSetItem(ctx.params.name, ctx.params.item)
 	ctx.body = items;
 })
+
 
 /*********************************************************************************
  *  					models
@@ -755,71 +788,9 @@ router.put('/api/ca/object_lots/:id/:type', async function(ctx) {
  */
 
 router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
-
-	var sanitize = require("sanitize-filename");
-	var os = require("os")
-
-	var body = {}
-	// get item data (idno, lot_id)
-	var item = null;
-	try {
-		var item = await ca.getItem("ca_objects", ctx.params.id, getLocale(ctx))
-	} catch(e) {
-		ctx.body = {error: e};
-		ctx.status = 500
-		console.log(e)
-		throw(e)
-	}
-
-	// create filename
-	const file = ctx.request.files.file;
-	var filename = sanitize(file.name)
-	filename = filename.replace(/ /g, '_')
-	filename = item.idno + '_' + filename
-	var uploadPath = path.join('/files', item.lot_id.toString())
-	var filePath = path.join(uploadPath, filename)
-	console.log('UPLOADing to /files/' + filename)
-
-	// check that LOT dir does exist
-	if (!fs.existsSync(uploadPath)) {
-		console.log('no ' + uploadPath)
-		fs.mkdirSync(uploadPath)
-	}
-
-	// check that file does not exist
-	if (fs.existsSync(filePath)) {
-		console.log('file exists')
-		ctx.status = 409
-		ctx.body = {error: 'file exists'}
-		return
-	} else {
-		await pipeline (
-			fs.createReadStream(file.path),
-			fs.createWriteStream(filePath)
-		);
-
-		// copy file to import dir of CA
-		var extensions = ['tif', 'tiff', 'jpg', 'png','jpeg']
-		var splitted = filename.split('.')
-		if(extensions.includes(splitted[splitted.length - 1].toLowerCase())) {
-			await pipeline (
-				fs.createReadStream(filePath),
-				fs.createWriteStream(path.join('/import', filename))
-			);
-			// add file to CollectiveAccess via API
-			var result = await ca.createRepresentation(config.collectiveaccess.import_path, filename,  filePath, item.id, ctx.session.user.token)
-
-			// remove file from CA import dir
-			try {
-			  fs.unlinkSync(path.join('/import', filename))
-			  //file removed
-			} catch(err) {
-				console.error(err)
-			}
-		}
-
-		ctx.body = result
-	}
+	
+	var result = await media.uploadFile(ctx)
+	ctx.body = result
 
 });
 
@@ -1026,11 +997,10 @@ init();
 
 function isValidUser(ctx) {
 
-	if(config.authentication == 'shibboleth') {
-		const user = ctx.get('mail');
+	if(config.authentication == 'shibboleth' || config.authentication == 'dummyUser') {
+		const user = ctx.get(config.shibboleth.headerId);
 		if(user in config.shibboleth.users) {
 			if(ctx.session && ctx.session.user && ctx.session.user.username == config.shibboleth.users[user].ca_username) {
-				//ctx.token = sessions[ctx.get('mail')].token; // TODO: FIX token handling for shibboleth!!!
 				return true;
 			} else {
 				throw('et ole kirjautunut')
@@ -1125,7 +1095,7 @@ function getTableName(table_num) {
 
 function getLocale(ctx) {
 	return 'FI_fi' // TODO: HARDCODED!!!
-	var locale = config.shibboleth.users[ctx.get('mail')].locale; // user's default locale from config
+	var locale = config.shibboleth.users[ctx.get(config.shibboleth.headerId)].locale; // user's default locale from config
 	var lang_code = locale.split('_')
 	if(lang_code.length != 2) throw("Invalid language code");
 	return locale;
@@ -1139,6 +1109,7 @@ async function init() {
 	await loadConfig();
 	ca = new CA(config);
 	await ca.init();
+	media = new Media(config, ca)
 
 
 	// create webdav client

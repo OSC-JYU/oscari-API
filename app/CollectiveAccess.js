@@ -7,6 +7,7 @@ var Base64 			= require('js-base64').Base64;
 var PHPUnserialize 	= require('php-unserialize');
 
 var debug			= require('debug')('debug');
+var error			= require('debug')('error');
 
 const SINGULARS = {
 	'ca_objects': 'object',
@@ -222,17 +223,32 @@ class CA {
 		}
 	}
 
-	async deleteSet(set_id, ctx) {
-		var values = [set_id, ctx.session.user.user_id]
-		var sql = "UPDATE ca_sets SET deleted = 1 WHERE set_id = ? and user_id = ?;"
+	async deleteSet(set_code, ctx) {
 		try {
-			await this.makeQuery(sql, values);
+			var set_id = await this.getSetID(set_code, ctx.session.user.user_id)
+			var values = [set_id, ctx.session.user.user_id]
+			var sql = "UPDATE ca_sets SET deleted = 1 WHERE set_id = ? and user_id = ?;"
+			try {
+				await this.makeQuery(sql, values);
+			} catch(e) {
+				debug(e)
+				throw('removing set failed')
+			}
 		} catch(e) {
 			debug(e)
 			throw('removing set failed')
 		}
 	}
 
+	async getSetID(set_code, user_id) {
+		var sql = "SELECT set_id, set_code FROM ca_sets WHERE set_code = ? AND user_id = ?";
+		var set_result = await this.makeQuery(sql, [set_code, user_id]);
+		if(Array.isArray(set_result) && set_result.length == 1) {
+			return set_result[0].set_id
+		} else {
+			throw('Settiä ' + set_code + ' ei löytynyt')
+		}
+	}
 
 	// we need to get list IDs of status lists for objects and object_lots
 	// ID is then inserted to a model
@@ -428,76 +444,80 @@ class CA {
 		try {
 			// get IDNO and lot_id
 			var item = await this.getBaseInfo(table, id)
-			item.typename = await this.getItemType(table, item.type_id);
-			item.id = id;
-			item.table = table;
-			item.elements = {}
-			item.relations = {};
-			// get labels
-			var labels = await this.getItemLabels(table, id, locale);
-			item.labels = labels;
-			// get element values
-			var values = await this.getAttributeValues(table, id);
-			debug('********** METADATA VALUES ********** ')
-			debug(values)
-			debug('********** METADATA VALUES ENDs ********** ')
-			// group elements by parent_id in order to get containers
-			var containers = groupByElements(values, 'parent_id');
+			if(item) {
+				item.typename = await this.getItemType(table, item.type_id);
+				item.id = id;
+				item.table = table;
+				item.elements = {}
+				item.relations = {};
+				// get labels
+				var labels = await this.getItemLabels(table, id, locale);
+				item.labels = labels;
+				// get element values
+				var values = await this.getAttributeValues(table, id);
+				debug('********** METADATA VALUES ********** ')
+				debug(values)
+				debug('********** METADATA VALUES ENDs ********** ')
+				// group elements by parent_id in order to get containers
+				var containers = groupByElements(values, 'parent_id');
 
 
-			// get elements without parent element and group by element_id (i.e. elements that are not part of container)
-			var attributes = [];
-			for(var it of values) {
-				if(!it.parent_id) attributes.push(it);
+				// get elements without parent element and group by element_id (i.e. elements that are not part of container)
+				var attributes = [];
+				for(var it of values) {
+					if(!it.parent_id) attributes.push(it);
+				}
+
+				var item_attributes = groupByElements(attributes, 'element_code');
+				debug('********** ATTRIBUTES ********** ')
+				debug(JSON.stringify(item_attributes))
+				debug('********** ATTRIBUTES ENDS ********** ')
+
+
+				// containers
+				debug('********** CONTAINERS ********** ')
+				if(table !== 'ca_storage_locations')
+					await this.pickValues(containers, item, locale, true)
+				//debug(containers)
+				debug('********** CONTAINERS ENDS ****** ')
+				// non-containers
+				await this.pickValues(item_attributes, item, locale, false)
+				debug(item.elements)
+
+				// relations
+
+				if(table == 'ca_objects') {
+					item.media = await this.getMedia(id);
+					item.relations.entities = await this.getRelations('ca_objects_x_entities', 'entity', 'object_id', 'entity_id', id, true);
+					item.relations.collections = await this.getRelations('ca_objects_x_collections', 'collection', 'object_id', 'collection_id', id);
+					item.relations.storage_locations = await this.getRelations('ca_objects_x_storage_locations', 'storage_location', 'object_id', 'location_id', id, true);
+					item.relations.occurrences = await this.getRelations('ca_objects_x_occurrences', 'occurrence', 'object_id', 'occurrence_id', id, true);
+
+				} else if(table == 'ca_entities') {
+					item.relations.objects = await this.getRelations('ca_objects_x_entities', 'object', 'entity_id', 'object_id', id);
+					item.relations.object_lots = await this.getRelations('ca_object_lots_x_entities', 'object_lot', 'entity_id', 'lot_id', id);
+					item.relations.occurrences = await this.getRelations('ca_entities_x_occurrences', 'occurrence', 'entity_id', 'occurrence_id', id);
+
+				} else if(table == 'ca_storage_locations') {
+					item.relations.objects = await this.getRelations('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
+
+				} else if(table == 'ca_object_lots') {
+					item.relations.entities = await this.getRelations('ca_object_lots_x_entities', 'entity', 'lot_id', 'entity_id', id, true);
+					item.relations.objects = await this.getObjectsByLOT(id);
+					item.object_count = await this.getLOTObjectCount(id);
+
+				} else if(table == 'ca_collections') {
+					item.relations.objects = await this.getRelations('ca_objects_x_collections', 'object', 'collection_id', 'object_id', id);
+
+				} else if(table == 'ca_occurrences') {
+					item.relations.entities = await this.getRelations('ca_entities_x_occurrences', 'entity', 'occurrence_id', 'entity_id', id, true);
+					item.relations.objects = await this.getRelations('ca_objects_x_occurrences', 'object', 'occurrence_id', 'object_id', id);
+				}
+
+				return item;
+			} else {
+				return null
 			}
-
-			var item_attributes = groupByElements(attributes, 'element_code');
-			debug('********** ATTRIBUTES ********** ')
-			debug(JSON.stringify(item_attributes))
-			debug('********** ATTRIBUTES ENDS ********** ')
-
-
-			// containers
-			debug('********** CONTAINERS ********** ')
-			if(table !== 'ca_storage_locations')
-				await this.pickValues(containers, item, locale, true)
-			//debug(containers)
-			debug('********** CONTAINERS ENDS ****** ')
-			// non-containers
-			await this.pickValues(item_attributes, item, locale, false)
-			debug(item.elements)
-
-			// relations
-
-			if(table == 'ca_objects') {
-				item.media = await this.getMedia(id);
-				item.relations.entities = await this.getRelations('ca_objects_x_entities', 'entity', 'object_id', 'entity_id', id, true);
-				item.relations.collections = await this.getRelations('ca_objects_x_collections', 'collection', 'object_id', 'collection_id', id);
-				item.relations.storage_locations = await this.getRelations('ca_objects_x_storage_locations', 'storage_location', 'object_id', 'location_id', id, true);
-				item.relations.occurrences = await this.getRelations('ca_objects_x_occurrences', 'occurrence', 'object_id', 'occurrence_id', id, true);
-
-			} else if(table == 'ca_entities') {
-				item.relations.objects = await this.getRelations('ca_objects_x_entities', 'object', 'entity_id', 'object_id', id);
-				item.relations.object_lots = await this.getRelations('ca_object_lots_x_entities', 'object_lot', 'entity_id', 'lot_id', id);
-				item.relations.occurrences = await this.getRelations('ca_entities_x_occurrences', 'occurrence', 'entity_id', 'occurrence_id', id);
-
-			} else if(table == 'ca_storage_locations') {
-				item.relations.objects = await this.getRelations('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
-
-			} else if(table == 'ca_object_lots') {
-				item.relations.entities = await this.getRelations('ca_object_lots_x_entities', 'entity', 'lot_id', 'entity_id', id, true);
-				item.relations.objects = await this.getObjectsByLOT(id);
-				item.object_count = await this.getLOTObjectCount(id);
-
-			} else if(table == 'ca_collections') {
-				item.relations.objects = await this.getRelations('ca_objects_x_collections', 'object', 'collection_id', 'object_id', id);
-
-			} else if(table == 'ca_occurrences') {
-				item.relations.entities = await this.getRelations('ca_entities_x_occurrences', 'entity', 'occurrence_id', 'entity_id', id, true);
-				item.relations.objects = await this.getRelations('ca_objects_x_occurrences', 'object', 'occurrence_id', 'object_id', id);
-			}
-
-			return item;
 		} catch(e) {
 			throw({msg: "Could not get item " + id + " error: " + e.message, statusCode: 404})
 		}
@@ -625,10 +645,17 @@ class CA {
 		if(table == 'ca_object_lots') table_id = 'lot_id' // object lots id = lot_id
 		if(table == 'ca_collections') table_id = 'collection_id' // object lots id = lot_id
 		var sql_info = "select * from " + table + " WHERE " + table_id + " = ?;"
-		debug(sql_info)
 		var values = [id]
-		var info = await this.makeQuery(sql_info, values);
-		return info[0];
+		debug(sql_info)
+		debug('values: ' + values)
+		try {
+			var info = await this.makeQuery(sql_info, values);
+			if(info && info[0]) return info[0]
+			else return null
+		} catch(e) {
+			error(e)
+			console.log(e)
+		}
 	}
 
 	async getItemLabels(table, id, locale) {
@@ -677,18 +704,24 @@ class CA {
 	async getChanges(table, action, ctx) {
 
 		var table_num = TABLES[table];
-		var values = [table_num, ctx.session.user.user_id]
+		var limit = 10
+		if(parseInt(ctx.query.limit)) {
+			limit = parseInt(ctx.query.limit)
+		} 
+		var values = [table_num, ctx.session.user.user_id, limit]
 		var actions = {'I': 'lisäys', 'D': 'poisto', 'U': 'muutos'}
-		var sql = "SELECT * FROM (SELECT  FROM_UNIXTIME(log_datetime) as date, log.logged_row_id, user.user_name, log.changetype FROM ca_change_log log INNER JOIN ca_users user ON user.user_id = log.user_id WHERE log.logged_table_num IN (?) AND log.user_id = ?  ORDER BY log_id DESC LIMIT 10) as sub GROUP by logged_row_id ORDER BY date DESC;"
+		var sql = "SELECT * FROM (SELECT  FROM_UNIXTIME(log_datetime) as date, log.logged_row_id, user.user_name, log.changetype FROM ca_change_log log INNER JOIN ca_users user ON user.user_id = log.user_id WHERE log.logged_table_num IN (?) AND log.user_id = ?  AND log.changetype != 'D' ORDER BY log_id DESC LIMIT ?) as sub GROUP by logged_row_id ORDER BY date DESC;"
 
 		var changes = await this.makeQuery(sql, values);
 		for(var change of changes) {
 			change.table = getTableName(change.logged_table_num)
 			change.action = actions[change.changetype]
 			var item = await this.getItem(table, change.logged_row_id, 'FI_fi')
-			change.idno = item.idno
-			change.label = item.labels.preferred_label
-			change.typename = item.typename
+			if(item) {
+				change.idno = item.idno
+				change.label = item.labels.preferred_label
+				change.typename = item.typename
+			}
 		}
 		return changes;
 
@@ -904,7 +937,7 @@ class CA {
 			debug(url)
 			var result = await requestp(url, {method: "PUT", json: object})
 			debug(result)
-			await this.saveRelationInfo(table, data, id)
+			if(table == 'ca_objects' || table == 'ca_object_lots') await this.saveRelationInfo(table, data, id)
 			if(user_id) await this.logChange(table, id, user_id)
 			return result;
 		} catch(e) {
@@ -1244,6 +1277,16 @@ class CA {
 	}
 
 
+	getElementById(id) {
+		console.log(typeof id)
+		var out = null;
+		for(var ele of Object.keys(this.elements)) {
+			if(this.elements[ele].id === id) out = this.elements[ele];
+		}
+		return out;
+	}
+
+
 	async makeQuery(sql, values) {
 		var dbconfig = {};
 		dbconfig.host = process.env.DB_HOST;
@@ -1264,14 +1307,6 @@ class CA {
 		return items;
 	}
 
-	getElementById(id) {
-		console.log(typeof id)
-		var out = null;
-		for(var ele of Object.keys(this.elements)) {
-			if(this.elements[ele].id === id) out = this.elements[ele];
-		}
-		return out;
-	}
 
 }
 
