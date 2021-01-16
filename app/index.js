@@ -17,6 +17,7 @@ const requestp		= require('request-promise-native');
 const mysql			= require('mysql')
 var debug			= require('debug')('debug');
 var debugRouter		= require('debug')('router');
+const winston 		= require('winston');
 
 var CA				= require('./CollectiveAccess.js');
 var Media			= require('./Media.js');
@@ -59,6 +60,30 @@ const SESSION_CONFIG = {
 app.keys = ['Shh, its OScari!'];
 app.use(session(SESSION_CONFIG, app));  // Include the session middleware
 
+
+// LOGGING
+require('winston-daily-rotate-file');
+ 
+var rotatedLog = new (winston.transports.DailyRotateFile)({
+	filename: 'logs/oscari-%DATE%.log',
+	datePattern: 'YYYY-MM',
+	zippedArchive: false,
+	maxSize: '20m'
+});
+
+const logger = winston.createLogger({
+	format: winston.format.combine(
+		winston.format.timestamp(),
+		winston.format.prettyPrint()
+	),
+	transports: [
+		new winston.transports.Console(),
+		rotatedLog
+	]
+});
+logger.info('Oscari-API started');
+// LOGGING ENDS
+
 //Set up body parsing middleware
 app.use(bodyParser({
    multipart: true,
@@ -76,22 +101,26 @@ app.use(async function handleError(context, next) {
 	try {
 		await next();
 	} catch (error) {
-		if(error.message)
-			console.log('ERROR: ' + error.message);
-		else
-			console.log('ERROR: ' + error);
-		if(error.stack) console.log(error.stack);
-		// if we 401, then try to re-login
-		if(error && error.statusCode) {
-			//console.log("TODO: trying to re-login")
-			context.status = error.statusCode;
-			context.body = {}
-		} else {
-			context.status = 500;
-			context.body = {'error':error};
-		}
+		context.status = 500;
+		var error_msg = error
+		if(error.status) context.status = error.status
+		if(error.message) error_msg = error.message
+		
+		logger.error({
+			user:context.request.headers.mail, 
+			message: error_msg, 
+			params: context.params,
+			path: context.path,
+			body: context.request.body,
+			error: error
+		});
+		context.body = {'error':error_msg};
+
+		debug(error.stack);
 	}
 });
+
+
 
 app.use(async (ctx, next) => {
 	debugRouter(ctx.method, ctx.path)
@@ -149,7 +178,9 @@ router.post('/api/ca/logout', async function(ctx) {
 router.post('/api/ca/login', async function(ctx) {
 
 	if(config.authentication == 'dummyUser') {
+		console.log(config.shibboleth.users)
 		var user = config.shibboleth.users[config.shibboleth['dummyUser']]
+		console.log(user)
 		var auth = {
 			auth: {
 				username: user.ca_username,
@@ -158,8 +189,13 @@ router.post('/api/ca/login', async function(ctx) {
 		}
 		
 	} else if(config.authentication == 'shibboleth') {
-		if(!config.shibboleth.users[ctx.headers[config.shibboleth.headerId]])
-			throw('Login failed')
+		if(!config.shibboleth.users[ctx.headers[config.shibboleth.headerId]]) {
+			console.log(config.shibboleth.headerId)
+			console.log(ctx.headers[config.shibboleth.headerId])
+			console.log(ctx.headers)
+			console.log(config.shibboleth.users)
+			throw('Shibboleth login failed')
+		}
 
 		var user = config.shibboleth.users[ctx.headers[config.shibboleth.headerId]]
 		var auth = {
@@ -191,10 +227,6 @@ router.post('/api/ca/login', async function(ctx) {
 		debug(e)
 		throw('Login failed')
 	}
-
-
-	//debug(login_json)
-
 
 })
 
@@ -266,22 +298,27 @@ router.get('/api/ca/object_lots/:id', async function(ctx) {
 router.get('/api/ca/objects/:id', async function(ctx, next) {
 	//var item = await ca.getItemFromAPI("ca_objects", ctx.params.id, ctx.session.user.token)
 	var item = await ca.getItem("ca_objects", ctx.params.id, getLocale(ctx))
-	if(ctx.query.form){
-		var form = await ca.getInputFormAndModel(ctx, ctx.query.form, item.typename);
-		var out = {screens: {}}
-		for(var screen in form.screens) {
-			out.screens[screen] = []
-			if(form.screens[screen].bundles) {
-				for(var b of form.screens[screen].bundles) {
-					var b_obj = {'name': b.bundle_name}
-					if(item.elements[b.bundle_name]) b_obj.element = item.elements[b.bundle_name]
-					out.screens[screen].push(b_obj)
+	if(!item) {
+			ctx.status = 404;
+			ctx.body = {};
+	} else {
+		if(ctx.query.form){
+			var form = await ca.getInputFormAndModel(ctx, ctx.query.form, item.typename);
+			var out = {screens: {}}
+			for(var screen in form.screens) {
+				out.screens[screen] = []
+				if(form.screens[screen].bundles) {
+					for(var b of form.screens[screen].bundles) {
+						var b_obj = {'name': b.bundle_name}
+						if(item.elements[b.bundle_name]) b_obj.element = item.elements[b.bundle_name]
+						out.screens[screen].push(b_obj)
+					}
 				}
 			}
+			item.form = out;
 		}
-		item.form = out;
+		ctx.body = item;
 	}
-	ctx.body = item;
 })
 
 
@@ -585,17 +622,16 @@ router.get('/api/ca/find', async function(ctx) {
 	var objects_url = config.collectiveaccess.url + "/service.php/find/ca_objects?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token ;
 	var entities_url = config.collectiveaccess.url + "/service.php/find/ca_entities?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var lots_url = config.collectiveaccess.url + "/service.php/find/ca_object_lots?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
-	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	//var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var occurrences_url = config.collectiveaccess.url + "/service.php/find/ca_occurrences?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 
 	console.log(locations_url)
 
-	const [objects, entities, lots, collections, locations, occurrences] = await Promise.all([
+	const [objects, entities, lots, locations, occurrences] = await Promise.all([
 		requestp(objects_url + cacheRand(), {json:adv}),
 		requestp(entities_url + cacheRand(), {json:adv}),
 		requestp(lots_url + cacheRand(), {json:adv}),
-		requestp(collections_url + cacheRand(), {json:adv}),
 		requestp(locations_url + cacheRand(), {json:adv}),
 		requestp(occurrences_url + cacheRand(), {json:adv})
 	]);
@@ -607,7 +643,7 @@ router.get('/api/ca/find', async function(ctx) {
 	  ctx.body = err.message
 	});
 */
-	ctx.body = {objects: objects, entities: entities, object_lots: lots, collections: collections, storage_locations: locations, occurrences: occurrences}
+	ctx.body = {objects: objects, entities: entities, object_lots: lots,  storage_locations: locations, occurrences: occurrences}
 })
 
 
@@ -797,12 +833,12 @@ router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
 
 // get file
 router.get('/api/ca/files/:dir/:file', async function(ctx) {
-	if(!parseInt(ctx.params.dir) || ctx.params.dir !== 'luetteloimaton') {
-		throw('illegal path')
-	} else {
+	if(parseInt(ctx.params.dir) || ctx.params.dir === 'luetteloimaton') {
 		var file = path.join('/files', ctx.params.dir, ctx.params.file);
 		debug(file)
-		ctx.body = client.createReadStream(file)
+		ctx.body = fs.createReadStream(file)
+	} else {
+		throw('illegal path')
 	}
 })
 
@@ -999,11 +1035,12 @@ function isValidUser(ctx) {
 
 	if(config.authentication == 'shibboleth' || config.authentication == 'dummyUser') {
 		const user = ctx.get(config.shibboleth.headerId);
+		console.log(user)
 		if(user in config.shibboleth.users) {
 			if(ctx.session && ctx.session.user && ctx.session.user.username == config.shibboleth.users[user].ca_username) {
 				return true;
 			} else {
-				throw('et ole kirjautunut')
+				throw({message: 'et ole kirjautunut', status: 401})
 			}
 		} else {
 			throw('ei oikeuksia')

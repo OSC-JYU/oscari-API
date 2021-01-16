@@ -68,10 +68,21 @@ class Media {
 
 	async uploadFile(ctx) {
 
+		var allowed_formats = ['tiff', 'tif','jpg', 'jpeg', 'png', 'pdf', 'mp3', 'mp4']
 		var sanitize = require("sanitize-filename");
 		var os = require("os")
 
+		// create filename and check extension
+		const file = ctx.request.files.file;
+		var filename = sanitize(file.name)
+		var splitted = filename.split('.')
+		var extension = splitted[splitted.length - 1].toLowerCase()
+		debug(filename)
+		if(!allowed_formats.includes(extension)) throw('Invalid file format')
+
+
 		var body = {}
+		var result = {}
 		// get item data (idno, lot_id)
 		var item = null;
 		try {
@@ -83,15 +94,12 @@ class Media {
 			throw(e)
 		}
 
-		// create filename
-		const file = ctx.request.files.file;
-		var filename = sanitize(file.name)
 		filename = filename.replace(/ /g, '_')
 		filename = item.idno + '_' + filename
+
 		var uploadPath = path.join('/files', item.lot_id.toString())
 		var filePath = path.join(uploadPath, filename)
 		debug('UPLOAD PATH: ' + filePath)
-
 
 		// check that LOT dir does exist
 		if (!fs.existsSync(uploadPath)) {
@@ -102,41 +110,171 @@ class Media {
 		// check that file does not exist
 		if (fs.existsSync(filePath)) {
 			console.log('file exists')
-			ctx.status = 409
-			ctx.body = {error: 'file exists'}
-			return
+			throw({message:'file exists', statusCode: 409})
 		} else {
 			console.log('UPLOADing original file to /files/' + filename)
 			await pipeline (
 				fs.createReadStream(file.path),
 				fs.createWriteStream(filePath)
 			);
+			try {
+				await this.import2CA(item, filePath, filename, ctx)
+			} catch(e) {
+				console.log(e)
+				throw('Collectiveaccess import failed!' + filename + e)
+			}
+		}
+		return result
+	}
 
-			// copy file to import dir of CA
-			var extensions = ['tif', 'tiff', 'jpg', 'png','jpeg']
-			var splitted = filename.split('.')
-			if(extensions.includes(splitted[splitted.length - 1].toLowerCase())) {
-				console.log('Creating preview file to /import')
-				await pipeline (
-					fs.createReadStream(filePath),
-					fs.createWriteStream(path.join('/import', filename))
-				);
-				// add file to CollectiveAccess via API
-				var result = await this.ca.createRepresentation(this.config.collectiveaccess.import_path, filename,  filePath, item.id, ctx.session.user.token)
 
-				// remove file from CA import dir
+
+	async import2CA(item, filePath, filename, ctx) {
+		var imported = null
+		var image_extensions = ['tif', 'tiff', 'jpg', 'png','jpeg']
+		
+		var splitted = filename.split('.')
+		var extension = splitted[splitted.length - 1].toLowerCase()
+		
+		// IMAGE FILES
+		if(image_extensions.includes(extension)) {
+			try {
+				imported = await this.importImage(item, filePath, filename, ctx)
+			} catch(e) {
+				// if we failed, then we must remove uploaded file from /files
+				console.log(e)
 				try {
-				  fs.unlinkSync(path.join('/import', filename))
-				  //file removed
+					console.log('removing file: ' + filePath)
+					fs.unlinkSync(filePath)
+					//file removed
 				} catch(err) {
 					console.error(err)
 				}
+				throw(e)
 			}
-
-			ctx.body = result
+		// PDF FILES
+		} else if (extension === 'pdf') {
+			try {
+				imported = await this.importPDF(item, filePath, filename, ctx)
+			} catch(e) {
+				// if we failed, then we must remove uploaded file from /files
+				console.log(e)
+				try {
+					console.log('removing file: ' + filePath)
+					fs.unlinkSync(filePath)
+					//file removed
+				} catch(err) {
+					console.error(err)
+				}
+				throw(e)
+			}
+			
+		// other formats are not imported to CA but their location is written to 'external_media' field
+		} else {
+			try {
+				imported = await this.importOtherFormat(item, filePath, filename, ctx)
+			} catch(e) {
+				// if we failed, then we must remove uploaded file from /files
+				console.log(e)
+				try {
+					console.log('removing file: ' + filePath)
+					fs.unlinkSync(filePath)
+					//file removed
+				} catch(err) {
+					console.error(err)
+				}
+				throw(e)
+			}
 		}
+		return imported
 	}
 
+
+
+	async importImage(item, filePath, filename, ctx) {
+		var result = null
+		console.log('Creating preview file to /import')
+		const resizer =
+		  sharp()
+			.resize(this.config.image.usage.width, this.config.image.usage.height)
+			.jpeg();
+		await pipeline (
+			fs.createReadStream(filePath),
+			resizer,
+			fs.createWriteStream(path.join('/import', filename))
+		);
+		// add file to CollectiveAccess via API
+		try {
+			result = await this.ca.createRepresentation(this.config.collectiveaccess.import_path, filename,  filePath, item.id, ctx.session.user.token)
+			// remove file from CA import dir
+			try {
+			  fs.unlinkSync(path.join('/import', filename))
+			  //file removed
+			} catch(err) {
+				console.error(err)
+			}
+		} catch(e) {
+			console.log('Collectiveaccess media import failed', e)
+			throw('Poista minut')
+		}
+
+
+		return result
+	}
+
+
+	async importPDF(item, filePath, filename, ctx) {
+		var result = null
+		console.log('Copying PDF file to /import')
+		await pipeline (
+			fs.createReadStream(filePath),
+			fs.createWriteStream(path.join('/import', filename))
+		);
+		// add file to CollectiveAccess via API
+		try {
+			result = await this.ca.createRepresentation(this.config.collectiveaccess.import_path, filename,  filePath, item.id, ctx.session.user.token)
+			// remove file from CA import dir
+			try {
+			  fs.unlinkSync(path.join('/import', filename))
+			  //file removed
+			} catch(err) {
+				console.error(err)
+			}
+		} catch(e) {
+			
+		}
+		return result
+	}
+
+
+
+	async importOtherFormat(item, filePath, filename, ctx) {
+		var exists = false
+		var rows = []
+		var result = null
+		if(item.elements.external_media && item.elements.external_media.data) {
+			for(var row of item.elements.external_media.data) {
+				console.log(row)
+				if(row.value === filePath) {
+					exists = true
+				}
+				rows.push({'external_media': row.value})
+			}
+		}
+		
+		if(exists) throw('External file exists')
+		rows.push({'external_media': filePath})
+		
+		var edit = {'attributes': 
+			{'external_media': rows}
+		}
+		try {
+			result = await this.ca.editItem("ca_objects", ctx.params.id, edit, ctx.session.user.token, ctx.session.user.user_id);
+		} catch(e) {
+			throw("Object editing failed!", e)
+		}
+		return result
+	}
 
 }
 

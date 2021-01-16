@@ -7,6 +7,7 @@ var Base64 			= require('js-base64').Base64;
 var PHPUnserialize 	= require('php-unserialize');
 
 var debug			= require('debug')('debug');
+var debug_sql		= require('debug')('debug_sql');
 var error			= require('debug')('error');
 
 const SINGULARS = {
@@ -142,7 +143,8 @@ class CA {
 
 
 	async createSet(body, table, locale, ctx) {
-		var data = JSON.parse(body)
+		var data = body
+		if(typeof body == 'string') data = JSON.parse(body)
 		console.log(data.name)
 		if(!data.name) throw('Setin nimi pitää antaa')
 		var sanitize = require("sanitize-filename");
@@ -152,7 +154,7 @@ class CA {
 		// values = [user_id, set_code, table_num] objects only
 		var values = [ctx.session.user.user_id, clean_name, 57]
 		var search = await this.makeQuery("SELECT set_code FROM ca_sets WHERE set_code = ?", [clean_name]);
-		if(search.length) throw('Setti ' + clean_name + ' on jo olemassa')
+		if(search.length) throw({message: 'Set called ' + clean_name + ' exists', status: 409})
 		var sql = "INSERT INTO ca_sets (hier_set_id, user_id, type_id, commenting_status, tagging_status, rating_status, set_code, table_num, access, status, hier_left, hier_right, deleted, rank) VALUES (0,?,12,0,0,0,?,?,0,0,1.0,429.00,0,0);"
 		try {
 			await this.makeQuery(sql, values);
@@ -176,7 +178,9 @@ class CA {
 	}
 
 	async createSetItems(set_code, body, locale) {
-		var data = JSON.parse(body)
+		if(!set_code) throw({msg: "Can not create set item for non-existing set!", statusCode: 404})
+		var data = body
+		if(typeof body == 'string') data = JSON.parse(body)
 		var sql = "SELECT set_id, set_code FROM ca_sets WHERE set_code = ?";
 		var set_result = await this.makeQuery(sql, set_code);
 		console.log(set_result)
@@ -195,13 +199,16 @@ class CA {
 						if(search_result.length == 0) {
 							var sql = "INSERT INTO ca_set_items (set_id, table_num, row_id, type_id, rank, vars, deleted) VALUES (?,?,?,12,0,'',0)"
 							var result = await this.makeQuery(sql, values);
+							return result
 						}
 					} catch(e) {
 						debug(e)
-
+						throw('creating set item failed')
 					}
 				}
 			}
+		} else {
+			throw('creating set item failed')
 		}
 	}
 
@@ -224,9 +231,11 @@ class CA {
 	}
 
 	async deleteSet(set_code, ctx) {
+		// TODO: this should remove also set items and full delete should be optional
 		try {
 			var set_id = await this.getSetID(set_code, ctx.session.user.user_id)
 			var values = [set_id, ctx.session.user.user_id]
+			/*			
 			var sql = "UPDATE ca_sets SET deleted = 1 WHERE set_id = ? and user_id = ?;"
 			try {
 				await this.makeQuery(sql, values);
@@ -234,6 +243,23 @@ class CA {
 				debug(e)
 				throw('removing set failed')
 			}
+*/
+			var sql = "DELETE FROM ca_sets WHERE set_id = ? and user_id = ?;"
+			try {
+				await this.makeQuery(sql, values);
+			} catch(e) {
+				debug(e)
+				throw('removing set failed')
+			}
+
+			var sql = "DELETE FROM ca_set_labels WHERE set_id = ?;"
+			try {
+				await this.makeQuery(sql, values);
+			} catch(e) {
+				debug(e)
+				throw('removing set failed')
+			}
+
 		} catch(e) {
 			debug(e)
 			throw('removing set failed')
@@ -286,7 +312,6 @@ class CA {
 
 		// get parent
 		var sql = "select name from ca_storage_location_labels WHERE location_id=?;"
-		console.log(sql, values)
 		var result = await this.makeQuery(sql, values)
 		if(result && result[0] && result[0].name)
 			out.name =  result[0].name
@@ -314,7 +339,7 @@ class CA {
 		var lang_code = locale.split('_')
 		if(lang_code.length != 2) throw("Invalid language code");
 		var sql = "select CONCAT(language,'_',country) AS locale, is_default, name_singular AS text, item_value, l.item_id AS value FROM ca_list_item_labels l INNER JOIN ca_list_items i ON i.item_id = l.item_id INNER JOIN ca_locales lo ON lo.locale_id = l.locale_id  WHERE i.list_id = '" + list_id + "' and language = '" + lang_code[0] + "' AND country = '"+ lang_code[1] +"' ORDER BY name_singular;"
-		debug(sql)
+		debug_sql(sql)
 		var items = await this.makeQuery(sql)
 		return items;
 
@@ -354,7 +379,7 @@ class CA {
 
 		// metadata elements
 		var sql = "SELECT p.bundle_name, p.settings FROM ca_search_form_placements p INNER JOIN ca_search_forms form ON form.form_id = p.form_id  WHERE form_code = ?;"
-		debug(sql)
+		debug_sql(sql)
 		var placements = await this.makeQuery(sql, [form_code]);
 		for(var pl of placements) {
 			debug(pl)
@@ -384,7 +409,6 @@ class CA {
 		console.log(model)
 		// get form labels
 		var sql = "select ui.ui_id, ui.editor_code, ui.editor_type,label.name, label.locale_id, label.description, locale.language,  locale.country FROM ca_editor_uis ui INNER JOIN ca_editor_ui_labels label ON label.ui_id = ui.ui_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id WHERE ui.editor_code = '" + form + "';"
-		console.log(sql)
 		var forms = await this.makeQuery(sql);
 		var data = groupFormsBy(forms, 'editor_code');
 		if(!data[form]) throw('Form not found')
@@ -562,7 +586,7 @@ class CA {
 		} else {
 			sql = "SELECT rel.relation_id, rel.type_id, rel." + to_name + ", label."+name+" FROM " + table + " rel INNER JOIN ca_" + label_table + "_labels label ON rel."+to_name+" = label."+to_name+"  WHERE " + from_name + " = ? AND label.is_preferred = 1 ORDER BY label."+name + " LIMIT 50";
 		}
-		debug(sql)
+		debug_sql(sql)
 		// get relations
 		var relations = await this.makeQuery(sql, values);
 
@@ -646,8 +670,8 @@ class CA {
 		if(table == 'ca_collections') table_id = 'collection_id' // object lots id = lot_id
 		var sql_info = "select * from " + table + " WHERE " + table_id + " = ?;"
 		var values = [id]
-		debug(sql_info)
-		debug('values: ' + values)
+		debug_sql(sql_info)
+		debug_sql('values: ' + values)
 		try {
 			var info = await this.makeQuery(sql_info, values);
 			if(info && info[0]) return info[0]
@@ -679,7 +703,7 @@ class CA {
 		if(table == 'ca_entities') {
 			sql_labels = "select CONCAT(language,'_',country) AS locale, label.displayname, label.forename, label.surname, label.is_preferred from " + table + " obj INNER JOIN " +label_table + " label ON label." + table_id + " = obj." + table_id + " INNER JOIN ca_locales  lo ON lo.locale_id = label.locale_id WHERE obj." + table_id + " = " + id + ";"
 		}
-		debug(sql_labels)
+		debug_sql(sql_labels)
 		var labels = await this.makeQuery(sql_labels);
 
 		var labels_obj = {preferred_label: '', other_labels: []}
@@ -695,7 +719,7 @@ class CA {
 
 	async getAttributeValues(table, id) {
 		var sql = "select value_longtext1, val.attribute_id, val.element_id, attr.locale_id, element_code, parent_id, datatype, list_id FROM ca_attribute_values val INNER JOIN ca_attributes attr ON val.attribute_id = attr.attribute_id INNER JOIN ca_metadata_elements meta ON val.element_id = meta.element_id WHERE table_num = " + TABLES[table] + " AND row_id= "+id+";"
-		debug(sql)
+		debug_sql(sql)
 		var item = await this.makeQuery(sql);
 		return item;
 	}
@@ -853,7 +877,8 @@ class CA {
 		var data = {
 			 "intrinsic_fields":{
 			   "type_id":"134",
-			   "media": import_file
+			   "media": import_file,
+			   "original_file": original_filename
 			 },
 			 "preferred_labels":[
 			   {
@@ -862,9 +887,10 @@ class CA {
 			   }
 			 ],
 			  "attributes":{
-				"duo_tiedosto":[
+				"linked_original_file": [
 				  {
-					"duo_tiedosto":original_filename
+					"locale":"fi_FI",
+					"linked_original_file":original_filename
 				  }
 				]
 			  },
@@ -876,8 +902,18 @@ class CA {
 		var url = this.config.collectiveaccess.url + "/service.php/item/ca_object_representations?pretty=1&authToken=" + token;
 		debug(url)
 		console.log(JSON.stringify(data, null, 2))
-		var result = await requestp(url, {method: "PUT", json: data})
-		return result;
+		try {
+			var result = await requestp(url, {method: "PUT", json: data})
+			console.log('**********************************************************************')
+			console.log('********           MEDIA IMPORT REQUEST                     *********')
+			console.log('**********************************************************************')
+			console.log(result)
+			if(result.ok) return result;
+			else throw(JSON.stringify(data, null, 2))
+		} catch(e) {
+			console.log(e)
+			throw({message: 'Media import failed! ' + e})
+		}
 
 	}
 
@@ -929,6 +965,7 @@ class CA {
 		}
 
 		debug("***** DATA TO BE SEND *******")
+		console.log(JSON.stringify(object, null, 2))
 		debug(JSON.stringify(object, null, 2))
 		debug("***** DATA TO BE SEND ENDS*******")
 
@@ -937,7 +974,7 @@ class CA {
 			debug(url)
 			var result = await requestp(url, {method: "PUT", json: object})
 			debug(result)
-			if(table == 'ca_objects' || table == 'ca_object_lots') await this.saveRelationInfo(table, data, id)
+			//if(table == 'ca_objects' || table == 'ca_object_lots') await this.saveRelationInfo(table, data, id)
 			if(user_id) await this.logChange(table, id, user_id)
 			return result;
 		} catch(e) {
@@ -973,7 +1010,7 @@ class CA {
 		debug('*** RELATION INFO for ' + rel_table +' *** ' + table)
 
 		// enitity relationships with relation info (API does not save this data)
-		if(data.relations.ca_entities) {
+		if(data.relations && data.relations.ca_entities) {
 			for(var entity of data.relations.ca_entities) {
 				if(entity.relation_info) {
 
@@ -993,8 +1030,8 @@ class CA {
 					// 2. after relationship is saved, we must query for relation_id, so that we can save relationship record
 					var sql = "SELECT * FROM " + rel_table + " WHERE entity_id = ? AND " + id_name + " = ? AND type_id = ?;"
 					var values = [entity.entity_id, id, entity.type_id];
-					debug(sql)
-					debug(values)
+					debug_sql(sql)
+					debug_sql(values)
 					var relation = await this.makeQuery(sql, values);
 					debug(relation)
 
@@ -1005,8 +1042,8 @@ class CA {
 
 					var relation_id = relation[0].relation_id
 					var values = [element_id,1,TABLES[rel_table],relation_id]
-					debug(sql)
-					debug(values)
+					debug_sql(sql)
+					debug_sql(values)
 					var sql_insert = "INSERT INTO ca_attributes (element_id, locale_id, table_num, row_id) VALUES (?, ?, ?, ?)"
 					var insert = await this.makeQuery(sql_insert, values);
 
@@ -1018,8 +1055,8 @@ class CA {
 					// 3.3 then we write the attribute value
 					var values = [element_id, attribute_id, entity.relation_info];
 					var sql_value = "INSERT INTO ca_attribute_values (element_id, attribute_id, item_id, value_longtext1, value_longtext2, value_blob, value_decimal1, value_decimal2,value_integer1, source_info) VALUES (?,?, NULL, ?, NULL, NULL, NULL, NULL, NULL, '')"
-					debug(sql_value)
-					debug(values)
+					debug_sql(sql_value)
+					debug_sql(values)
 					var insert_value = await this.makeQuery(sql_value, values);
 				}
 			}
@@ -1248,7 +1285,7 @@ class CA {
 		var nextIDNO = {idno: ''}
 		var next = 1; // default if we have on objects
 		var sql = "SELECT idno, lot_id FROM ca_objects WHERE lot_id = " + lot_id;
-		debug(sql)
+		debug_sql(sql)
 		var objects = await this.makeQuery(sql);
 		if(objects.length > 0) {
 			var ids = objects.map(i => {
