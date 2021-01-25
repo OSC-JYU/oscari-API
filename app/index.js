@@ -174,13 +174,15 @@ router.post('/api/ca/logout', async function(ctx) {
 	ctx.body = {msg: 'logged out'}
 })
 
+
 // login user based on Shibboleth user name
 router.post('/api/ca/login', async function(ctx) {
+	
+	var shibbolethUser = null
 
 	if(config.authentication == 'dummyUser') {
-		console.log(config.shibboleth.users)
-		var user = config.shibboleth.users[config.shibboleth['dummyUser']]
-		console.log(user)
+		shibbolethUser = config.shibboleth['dummyUser']
+		var user = config.shibboleth.users[shibbolethUser]
 		var auth = {
 			auth: {
 				username: user.ca_username,
@@ -190,14 +192,11 @@ router.post('/api/ca/login', async function(ctx) {
 		
 	} else if(config.authentication == 'shibboleth') {
 		if(!config.shibboleth.users[ctx.headers[config.shibboleth.headerId]]) {
-			console.log(config.shibboleth.headerId)
-			console.log(ctx.headers[config.shibboleth.headerId])
-			console.log(ctx.headers)
-			console.log(config.shibboleth.users)
 			throw('Shibboleth login failed')
 		}
 
-		var user = config.shibboleth.users[ctx.headers[config.shibboleth.headerId]]
+		shibbolethUser = ctx.headers[config.shibboleth.headerId]
+		var user = config.shibboleth.users[shibbolethUser]
 		var auth = {
 			auth: {
 				username: user.ca_username,
@@ -222,10 +221,12 @@ router.post('/api/ca/login', async function(ctx) {
 		debug(login_json)
 		var user = {username: auth.auth.username, user_id: ca_user, token: login_json.authToken}
 		ctx.session.user = user;
-		ctx.body = {user: auth.auth.username, auth: config.authentication}
+		// return shibboleth user if using shibboleth
+		if(shibbolethUser) ctx.body = {user: shibbolethUser, auth: config.authentication}
+		else ctx.body = {user: auth.auth.username, auth: config.authentication}
 	} catch(e) {
 		debug(e)
-		throw('Login failed')
+		throw('CollectiveAccess login failed')
 	}
 
 })
@@ -622,17 +623,18 @@ router.get('/api/ca/find', async function(ctx) {
 	var objects_url = config.collectiveaccess.url + "/service.php/find/ca_objects?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token ;
 	var entities_url = config.collectiveaccess.url + "/service.php/find/ca_entities?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var lots_url = config.collectiveaccess.url + "/service.php/find/ca_object_lots?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
-	//var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 	var occurrences_url = config.collectiveaccess.url + "/service.php/find/ca_occurrences?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 
 	console.log(locations_url)
 
-	const [objects, entities, lots, locations, occurrences] = await Promise.all([
+	const [objects, entities, lots, locations, collections, occurrences] = await Promise.all([
 		requestp(objects_url + cacheRand(), {json:adv}),
 		requestp(entities_url + cacheRand(), {json:adv}),
 		requestp(lots_url + cacheRand(), {json:adv}),
 		requestp(locations_url + cacheRand(), {json:adv}),
+		requestp(collections_url + cacheRand(), {json:adv}),
 		requestp(occurrences_url + cacheRand(), {json:adv})
 	]);
 
@@ -643,7 +645,7 @@ router.get('/api/ca/find', async function(ctx) {
 	  ctx.body = err.message
 	});
 */
-	ctx.body = {objects: objects, entities: entities, object_lots: lots,  storage_locations: locations, occurrences: occurrences}
+	ctx.body = {objects: objects, entities: entities, object_lots: lots,  storage_locations: locations, collections: collections, occurrences: occurrences}
 })
 
 

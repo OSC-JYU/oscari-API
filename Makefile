@@ -23,7 +23,7 @@ start:
 		-e DB_USER=root \
 		-e DB_PW=root \
 		-e DB_NAME=c_access \
-		-e DEBUG=debug,info,error,router \
+		-e DEBUG=error,router \
 		 osc/oscari-api
 
 restart:

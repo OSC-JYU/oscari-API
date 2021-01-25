@@ -656,6 +656,7 @@ class CA {
 				media.tiny = '/' + unserialised.tiny.VOLUME + '/' + unserialised.tiny.HASH + '/' + unserialised.tiny.MAGIC + '_' + unserialised.tiny.FILENAME
 				media.medium = '/' + unserialised.medium.VOLUME + '/' + unserialised.medium.HASH + '/' + unserialised.medium.MAGIC + '_' + unserialised.medium.FILENAME
 				media.page = '/' + unserialised.preview.VOLUME + '/' + unserialised.page.HASH + '/' + unserialised.page.MAGIC + '_' + unserialised.page.FILENAME
+				media.original = '/' + unserialised.original.VOLUME + '/' + unserialised.original.HASH + '/' + unserialised.original.MAGIC + '_' + unserialised.original.FILENAME
 				out.push(media)
 			}
 		}
@@ -922,7 +923,7 @@ class CA {
 		if(!id) throw("Item id must be set!")
 
 		// REST API json
-		var object = {}
+		var object = {remove_attributes:[]}
 
 		// add attributes and labels to REST API json
 		if(data.attributes && Object.keys(data.attributes).length > 0) {
@@ -939,7 +940,7 @@ class CA {
 					}
 					object.preferred_labels = [label];
 				} else {
-					if(!object.remove_attributes) object.remove_attributes = []
+					//if(!object.remove_attributes) object.remove_attributes = []
 					object.remove_attributes.push(attr);
 					object.attributes[attr] = data.attributes[attr];
 				}

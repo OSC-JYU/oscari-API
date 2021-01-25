@@ -68,7 +68,7 @@ class Media {
 
 	async uploadFile(ctx) {
 
-		var allowed_formats = ['tiff', 'tif','jpg', 'jpeg', 'png', 'pdf', 'mp3', 'mp4']
+		var allowed_formats = ['tiff', 'tif','jpg', 'jpeg', 'png', 'pdf', 'mp3', 'mp4', 'wav', 'ogg']
 		var sanitize = require("sanitize-filename");
 		var os = require("os")
 
@@ -117,6 +117,7 @@ class Media {
 				fs.createReadStream(file.path),
 				fs.createWriteStream(filePath)
 			);
+			
 			try {
 				await this.import2CA(item, filePath, filename, ctx)
 			} catch(e) {
@@ -135,8 +136,23 @@ class Media {
 		
 		var splitted = filename.split('.')
 		var extension = splitted[splitted.length - 1].toLowerCase()
-		
-		// IMAGE FILES
+
+		try {
+			imported = await this.writeExternalMediaInfo(item, filePath, filename, ctx)
+		} catch(e) {
+			// if we failed, then we must remove uploaded file from /files
+			console.log(e)
+			try {
+				console.log('removing file: ' + filePath)
+				fs.unlinkSync(filePath)
+				//file removed
+			} catch(err) {
+				console.error(err)
+			}
+			throw(e)
+		}
+
+		// PREVIEWS IMAGE FILES
 		if(image_extensions.includes(extension)) {
 			try {
 				imported = await this.importImage(item, filePath, filename, ctx)
@@ -152,7 +168,7 @@ class Media {
 				}
 				throw(e)
 			}
-		// PDF FILES
+		// PREVIEWS PDF FILES
 		} else if (extension === 'pdf') {
 			try {
 				imported = await this.importPDF(item, filePath, filename, ctx)
@@ -168,24 +184,8 @@ class Media {
 				}
 				throw(e)
 			}
-			
-		// other formats are not imported to CA but their location is written to 'external_media' field
-		} else {
-			try {
-				imported = await this.importOtherFormat(item, filePath, filename, ctx)
-			} catch(e) {
-				// if we failed, then we must remove uploaded file from /files
-				console.log(e)
-				try {
-					console.log('removing file: ' + filePath)
-					fs.unlinkSync(filePath)
-					//file removed
-				} catch(err) {
-					console.error(err)
-				}
-				throw(e)
-			}
-		}
+		} 
+
 		return imported
 	}
 
@@ -195,7 +195,7 @@ class Media {
 		var result = null
 		console.log('Creating preview file to /import')
 		const resizer =
-		  sharp()
+		  sharp({limitInputPixels: false})
 			.resize(this.config.image.usage.width, this.config.image.usage.height)
 			.jpeg();
 		await pipeline (
@@ -248,22 +248,22 @@ class Media {
 
 
 
-	async importOtherFormat(item, filePath, filename, ctx) {
+	async writeExternalMediaInfo(item, filePath, filename, ctx) {
+		console.log('Writing external media info')
 		var exists = false
 		var rows = []
 		var result = null
 		if(item.elements.external_media && item.elements.external_media.data) {
 			for(var row of item.elements.external_media.data) {
-				console.log(row)
-				if(row.value === filePath) {
+				if(row.external_media_filename.value === filePath) {
 					exists = true
 				}
-				rows.push({'external_media': row.value})
+				rows.push({'external_media_filename': row.external_media_filename.value})
 			}
 		}
 		
 		if(exists) throw('External file exists')
-		rows.push({'external_media': filePath})
+		rows.push({'external_media_filename': filePath})
 		
 		var edit = {'attributes': 
 			{'external_media': rows}
