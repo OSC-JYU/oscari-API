@@ -12,8 +12,7 @@ const path 			= require('path');
 const stream 		= require('stream');
 const util 			= require('util');
 const sharp			= require('sharp');
-const request		= require('request');
-const requestp		= require('request-promise-native');
+const axios			= require('axios');
 const mysql			= require('mysql')
 var debug			= require('debug')('debug');
 var debugRouter		= require('debug')('router');
@@ -49,7 +48,7 @@ let media;
 let sessions = {};
 
 const pipeline = util.promisify(stream.pipeline);
-const { createClient } = require("webdav");
+//const { createClient } = require("webdav");
 
 var app 			= new Koa();
 var router 			= new Router();
@@ -63,7 +62,7 @@ app.use(session(SESSION_CONFIG, app));  // Include the session middleware
 
 // LOGGING
 require('winston-daily-rotate-file');
- 
+
 var rotatedLog = new (winston.transports.DailyRotateFile)({
 	filename: 'logs/oscari-%DATE%.log',
 	datePattern: 'YYYY-MM',
@@ -105,10 +104,10 @@ app.use(async function handleError(context, next) {
 		var error_msg = error
 		if(error.status) context.status = error.status
 		if(error.message) error_msg = error.message
-		
+
 		logger.error({
-			user:context.request.headers.mail, 
-			message: error_msg, 
+			user:context.request.headers.mail,
+			message: error_msg,
 			params: context.params,
 			path: context.path,
 			body: context.request.body,
@@ -144,11 +143,11 @@ app.use(async (ctx, next) => {
 		if(ctx.headers[config.shibboleth.headerId]) throw('Configuration error: Can not use dummyUser on shibboleth install!')
 		else ctx.headers[config.shibboleth.headerId] = config.shibboleth.dummyUser;
 	}
-	
+
 	// always accessible paths
 	 if(ctx.path == '/api/ca/login' || ctx.path == '/api/ca/config' ) {
 		await next()
-		
+
 	// all other paths are restricted
 	} else {
 		if (isValidUser(ctx)) {
@@ -177,7 +176,7 @@ router.post('/api/ca/logout', async function(ctx) {
 
 // login user based on Shibboleth user name
 router.post('/api/ca/login', async function(ctx) {
-	
+
 	var shibbolethUser = null
 
 	if(config.authentication == 'dummyUser') {
@@ -189,7 +188,7 @@ router.post('/api/ca/login', async function(ctx) {
 				password: user.ca_password
 			}
 		}
-		
+
 	} else if(config.authentication == 'shibboleth') {
 		if(!config.shibboleth.users[ctx.headers[config.shibboleth.headerId]]) {
 			throw('Shibboleth login failed')
@@ -216,8 +215,8 @@ router.post('/api/ca/login', async function(ctx) {
 	debug(config.collectiveaccess.url)
 	try {
 		debug(config.collectiveaccess.url + "/service.php/auth/login")
-		var login_result = await requestp(config.collectiveaccess.url + "/service.php/auth/login", auth)
-		var login_json = JSON.parse(login_result);
+		var login_result = await axios.get(config.collectiveaccess.url + "/service.php/auth/login", auth)
+		var login_json = login_result.data
 		debug(login_json)
 		var user = {username: auth.auth.username, user_id: ca_user, token: login_json.authToken}
 		ctx.session.user = user;
@@ -240,7 +239,7 @@ router.get('/api/ca/login', async function(ctx) {
 	}
 	try {
 		var url =config.collectiveaccess.url + '/service.php/auth/login?authToken=' + ctx.session.user.token
-		var result = await requestp(url)
+		var result = await axios.get(url)
 		if(config.authentication == 'shibboleth' || config.authentication == 'dummyUser') {
 			if(ctx.session.user) {
 				ctx.body = {'user': ctx.get(config.shibboleth.headerId), 'token': 'yes' }
@@ -288,8 +287,6 @@ router.get('/api/ca/storage_locations', async function(ctx, next) {
  * *******************************************************************************/
 
 router.get('/api/ca/object_lots/:id', async function(ctx) {
-	//var url = config.collectiveaccess.url + "/service.php/item/ca_object_lots/id/"+ctx.params.id+"?pretty=1&authToken=" + ctx.session.user.token
-	//var result = await requestp(url)
 	var item = await ca.getItem("ca_object_lots", ctx.params.id, getLocale(ctx))
 	ctx.body = item;
 
@@ -372,7 +369,7 @@ router.get('/api/ca/collections/:id', async function(ctx, next) {
 router.put('/api/ca/objects', async function(ctx, next) {
 
 	try {
-		result = await ca.createItem("ca_objects", ctx.request.body, ctx.session.user.token);
+		var result = await ca.createItem("ca_objects", ctx.request.body, ctx.session.user.token);
 		ctx.body = result;
 	} catch(e) {
 		throw("Object creation failed!", e)
@@ -382,8 +379,8 @@ router.put('/api/ca/objects', async function(ctx, next) {
 router.put('/api/ca/objects/:id', async function(ctx, next) {
 
 	try {
-		result = await ca.editItem("ca_objects", ctx.params.id, ctx.request.body, ctx.session.user.token, ctx.session.user.user_id);
-		ctx.body = result;
+		var result = await ca.editItem("ca_objects", ctx.params.id, ctx.request.body, ctx.session.user.token, ctx.session.user.user_id);
+		ctx.body = result
 	} catch(e) {
 		throw("Object editing failed!", e)
 	}
@@ -392,7 +389,7 @@ router.put('/api/ca/objects/:id', async function(ctx, next) {
 router.put('/api/ca/entities/:id', async function(ctx, next) {
 
 	try {
-		result = await ca.editItem("ca_entities", ctx.params.id, ctx.request.body, ctx.session.user.token);
+		var result = await ca.editItem("ca_entities", ctx.params.id, ctx.request.body, ctx.session.user.token);
 		ctx.body = result;
 	} catch(e) {
 		throw("Entity editing failed!", e)
@@ -402,7 +399,7 @@ router.put('/api/ca/entities/:id', async function(ctx, next) {
 router.put('/api/ca/entities', async function(ctx, next) {
 
 	try {
-		result = await ca.createItem("ca_entities", ctx.request.body, ctx.session.user.token);
+		var result = await ca.createItem("ca_entities", ctx.request.body, ctx.session.user.token);
 		ctx.body = result;
 	} catch(e) {
 		throw("Entity creation failed!", e)
@@ -413,7 +410,7 @@ router.put('/api/ca/entities', async function(ctx, next) {
 router.put('/api/ca/object_lots/:id', async function(ctx, next) {
 
 	try {
-		result = await ca.editItem("ca_object_lots", ctx.params.id, ctx.request.body, ctx.session.user.token);
+		var result = await ca.editItem("ca_object_lots", ctx.params.id, ctx.request.body, ctx.session.user.token);
 		ctx.body = result;
 	} catch(e) {
 		throw("Object LOT editing failed!", e)
@@ -423,7 +420,7 @@ router.put('/api/ca/object_lots/:id', async function(ctx, next) {
 
 router.put('/api/ca/object_lots', async function(ctx, next) {
 	try {
-		result = await ca.createItem("ca_object_lots", ctx.request.body, ctx.session.user.token);
+		var result = await ca.createItem("ca_object_lots", ctx.request.body, ctx.session.user.token);
 		ctx.body = result;
 	} catch(e) {
 		throw("Object lot creation failed!", e)
@@ -435,7 +432,7 @@ router.put('/api/ca/object_lots', async function(ctx, next) {
 router.put('/api/ca/collections', async function(ctx, next) {
 
 	try {
-		result = await ca.createItem("ca_collections", ctx.request.body, ctx.session.user.token);
+		var result = await ca.createItem("ca_collections", ctx.request.body, ctx.session.user.token);
 		ctx.body = result;
 	} catch(e) {
 		throw("Collection creation failed!", e)
@@ -456,14 +453,14 @@ router.put('/api/ca/occurrences', async function(ctx, next) {
 
 router.get('/api/ca/representations/:id', async function(ctx, next) {
 	var url = config.collectiveaccess.url + "/service.php/item/ca_object_representations/id/" + ctx.params.id + "?pretty=1&authToken=" + ctx.session.user.token;
-	var result = await requestp(url)
-	ctx.body = result;
+	var result = await axios(url)
+	ctx.body = result.data;
 
 })
 
 router.put('/api/ca/representations/:id', async function(ctx, next) {
 	try {
-		result = await ca.editItem("ca_object_representations", ctx.params.id, ctx.request.body, ctx.session.user.token, ctx.session.user.user_id);
+		var result = await ca.editItem("ca_object_representations", ctx.params.id, ctx.request.body, ctx.session.user.token, ctx.session.user.user_id);
 		ctx.body = result;
 	} catch(e) {
 		throw("Representation editing failed!", e)
@@ -564,15 +561,16 @@ router.delete('/api/ca/sets/:name/items/:item', async function(ctx, next) {
 
 router.get('/api/ca/tables/:table/models', async function(ctx) {
 	var url = config.collectiveaccess.url + "/service.php/model/" + ctx.params.table + "?pretty=1&authToken=" + ctx.session.user.token;
-	var result = await requestp(url)
-	ctx.body = result;
+	var result = await axios.get(url)
+	ctx.body = result.data
 })
 
 
 router.get('/api/ca/tables/:table/models/:model/', async function(ctx) {
 	var url = config.collectiveaccess.url + "/service.php/model/" + ctx.params.table + "?pretty=1&authToken=" + ctx.session.user.token;
-	var result = await requestp(url)
-	ctx.body = result[ctx.params.model];
+	var result = await axios.get(url)
+	if(!result.data[ctx.params.model]) throw({status: 404})
+	ctx.body = result.data[ctx.params.model];
 })
 
 
@@ -616,36 +614,36 @@ router.get('/api/ca/find', async function(ctx) {
 			"ca_object_representations.media.tiny" : {"returnAsArray" : true}
 		}
 	}
-
-	//if(!ctx.query.q.includes('*')) ctx.query.q = ctx.query.q + '*'
+	var query = '?q=' + encodeURIComponent(ctx.query.q)
+	var bundles = '&source=' + encodeURIComponent(JSON.stringify(adv))
 	var paging = ca.getPaging(ctx);
 
-	var objects_url = config.collectiveaccess.url + "/service.php/find/ca_objects?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token ;
-	var entities_url = config.collectiveaccess.url + "/service.php/find/ca_entities?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
-	var lots_url = config.collectiveaccess.url + "/service.php/find/ca_object_lots?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
-	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
-	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
-	var occurrences_url = config.collectiveaccess.url + "/service.php/find/ca_occurrences?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var objects_url = config.collectiveaccess.url + "/service.php/find/ca_objects" + query + bundles + paging + "&pretty=1&authToken=" + ctx.session.user.token ;
+	var entities_url = config.collectiveaccess.url + "/service.php/find/ca_entities" + query + bundles + paging + "pretty=1&authToken=" + ctx.session.user.token;
+	var lots_url = config.collectiveaccess.url + "/service.php/find/ca_object_lots" + query + bundles + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var collections_url = config.collectiveaccess.url + "/service.php/find/ca_collections" + query + bundles + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var locations_url = config.collectiveaccess.url + "/service.php/find/ca_storage_locations" + query + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var occurrences_url = config.collectiveaccess.url + "/service.php/find/ca_occurrences" + query + bundles + paging + "&pretty=1&authToken=" + ctx.session.user.token;
 
 	console.log(locations_url)
 
 	const [objects, entities, lots, locations, collections, occurrences] = await Promise.all([
-		requestp(objects_url + cacheRand(), {json:adv}),
-		requestp(entities_url + cacheRand(), {json:adv}),
-		requestp(lots_url + cacheRand(), {json:adv}),
-		requestp(locations_url + cacheRand(), {json:adv}),
-		requestp(collections_url + cacheRand(), {json:adv}),
-		requestp(occurrences_url + cacheRand(), {json:adv})
+		axios.get(objects_url + cacheRand()),
+		axios.get(entities_url + cacheRand()),
+		axios.get(lots_url + cacheRand()),
+		axios.get(locations_url + cacheRand()),
+		axios.get(collections_url + cacheRand()),
+		axios.get(occurrences_url + cacheRand())
 	]);
 
-	/*
-	.catch(function(err) {
-	  console.log(err.message); // some coding error in handling happened
-	  ctx.status = 500;
-	  ctx.body = err.message
-	});
-*/
-	ctx.body = {objects: objects, entities: entities, object_lots: lots,  storage_locations: locations, collections: collections, occurrences: occurrences}
+	ctx.body = {
+		objects: objects.data,
+		entities: entities.data,
+		object_lots: lots.data,
+		storage_locations: locations.data,
+		collections: collections.data,
+		occurrences: occurrences.data
+	}
 })
 
 
@@ -663,24 +661,29 @@ router.get('/api/ca/find/:table', async function(ctx) {
 			"ca_storage_locations.parent.preferred_labels.name":{},
 			"yleisnimi" : {"convertCodesToDisplayText": true},
 			"type_id" : {"convertCodesToDisplayText": true},
+			"ca_entities" : {"returnAsArray" : true},
 			"ca_object_representations.media.medium" : {}
 		}
 	}
 
 	var paging = ca.getPaging(ctx);
-	var url = config.collectiveaccess.url + "/service.php/find/ca_" + ctx.params.table + "?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1&authToken=" + ctx.session.user.token;
+	var sort= ''
+	if(ctx.query.sort) sort = '&sort=' + ctx.query.sort
+	var url = config.collectiveaccess.url + "/service.php/find/ca_" + ctx.params.table + "?q=" + encodeURIComponent(ctx.query.q) + paging + "&pretty=1" + sort + "&authToken=" + ctx.session.user.token;
 	debug('QUERY: ' + ctx.params.table + ' | ' + ctx.query.q)
+	url += '&source=' + encodeURIComponent(JSON.stringify(adv))
 	debug(url)
 	try {
-		var result = await requestp(url + cacheRand(), {json:adv})
-		console.log('total: ' + result.total)
-		ctx.body = result;
+		var result = await axios.get(url + cacheRand())
+		console.log('total: ' + result.data.total)
+		ctx.body = result.data;
 	} catch(e) {
 		if(e.statusCode) ctx.status = e.statusCode;
 		else e.status = 500;
 		ctx.body = {error: e};
 	}
 })
+
 
 router.get('/api/ca/searchforms', async function(ctx) {
 	var forms = await ca.getSearchForms();
@@ -693,10 +696,22 @@ router.get('/api/ca/searchforms/:form_code', async function(ctx) {
 	ctx.body = forms;
 })
 
+router.get('/api/ca/idno/lots/:lot_id/check', async function(ctx) {
+	// check if IDNO is already used or not
+	var result = await ca.checkObjectIDNO(ctx.params.lot_id, ctx.query.idno)
+	ctx.body = result;
+})
+
 router.get('/api/ca/idno/lots/:lot_id', async function(ctx) {
 	// get next free IDNO
 	var next = await ca.getNextIDNO(ctx.params.lot_id, ctx.query.type)
 	ctx.body = next;
+})
+
+router.get('/api/ca/lots/lot_id/max', async function(ctx) {
+	// get next free IDNO
+	var id = await ca.getMaxLotId()
+	ctx.body = id;
 })
 
 
@@ -716,12 +731,12 @@ router.get('/api/ca/browse/:table', async function(ctx) {
 		for(var query in ctx.query) {
 			facets[query] = ctx.query[query].split(',')
 		}
-		available_facets = await requestp(url, {
+		available_facets = await axios.options(url, {
 			method: "OPTIONS",json:{
 				criteria: facets
 			}
 		})
-		result = await requestp(url, {
+		result = await axios.get(url, {
 			method: "GET",json:{
 				criteria: facets,
 				bundles: {
@@ -734,7 +749,7 @@ router.get('/api/ca/browse/:table', async function(ctx) {
 		})
 	// else shwow available facets
 	} else {
-		available_facets = await requestp(url, {method:"OPTIONS", json: true})
+		available_facets = await axios.options(url)
 	}
 
 	ctx.body = {facets: available_facets, result: result};
@@ -775,8 +790,8 @@ router.get('/api/ca/forms/:form', async function(ctx, next) {
 	for(var form in grouped) {
 		console.log(grouped[form].type)
 		var url = config.collectiveaccess.url + "/service.php/model/" + grouped[form].type + "?pretty=1&authToken=" + ctx.session.user.token;
-		var result = await requestp(url)
-		var models = JSON.parse(result)
+		var result = await axios.get(url)
+		var models = result.data
 		grouped[form].models = []
 		for(var model in models) {
 			grouped[form].models.push(model)
@@ -825,11 +840,24 @@ router.put('/api/ca/object_lots/:id/:type', async function(ctx) {
  *
  */
 
-router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
-	
-	var result = await media.uploadFile(ctx)
-	ctx.body = result
+router.post('/api/ca/media/:id/primary', async function(ctx, next) {
 
+	var result = await media.setPrimary(ctx, ctx.query.table)
+	ctx.body = result
+});
+
+
+router.post('/api/ca/objects/:id/upload', async function(ctx, next) {
+
+	var result = await media.uploadFile(ctx, 'object')
+	ctx.body = result
+});
+
+
+router.post('/api/ca/object_lots/:id/upload', async function(ctx, next) {
+
+	var result = await media.uploadFile(ctx, 'object_lots')
+	ctx.body = result
 });
 
 
@@ -1152,13 +1180,13 @@ async function init() {
 
 
 	// create webdav client
-	client = createClient(
-		config.nextcloud.url,
-		{
-			username: config.nextcloud.username,
-			password: config.nextcloud.password
-		}
-	);
+	// client = createClient(
+	// 	config.nextcloud.url,
+	// 	{
+	// 		username: config.nextcloud.username,
+	// 		password: config.nextcloud.password
+	// 	}
+	// );
 
 	// start the show
 	var server = app.listen(8080, function () {

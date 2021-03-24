@@ -1,6 +1,6 @@
 const util 			= require('util');
 const mysql			= require('mysql')
-const requestp		= require('request-promise-native');
+const axios			= require('axios');
 
 // these are needed for reading CA screen settings
 var Base64 			= require('js-base64').Base64;
@@ -9,6 +9,7 @@ var PHPUnserialize 	= require('php-unserialize');
 var debug			= require('debug')('debug');
 var debug_sql		= require('debug')('debug_sql');
 var error			= require('debug')('error');
+var info			= require('debug')('info');
 
 const SINGULARS = {
 	'ca_objects': 'object',
@@ -101,7 +102,7 @@ class CA {
 		var sql = "SELECT user_id FROM ca_users WHERE user_name = ?";
 		var user = await this.makeQuery(sql, username)
 		if(Array.isArray(user) && user.length == 1) return user[0].user_id;
-		else throw({msg:"User not found", statusCode: 401})
+		else throw({message: "User not found", status: 401})
 
 	}
 
@@ -133,14 +134,21 @@ class CA {
 			// let's map table nums to table names
 			for(var item of out.items) {
 				//item.type = getTableName(item.table_num)
-				item.media = await this.getMedia(item.row_id);
+				item.media = await this.getMedia(item.row_id, 'ca_objects_x_object_representations', 'object_id');
 				item.labels = await this.getItemLabels('ca_objects', item.row_id)
+				item.idno = await this.getObjectIDNO(item.row_id)
 				//item.data = await this.getItem(item.type, item.row_id, 'FI_fi')
 			}
 			return out;
 		}
 	}
 
+	async getObjectIDNO(row_id) {
+		var sql = "SELECT idno FROM ca_objects WHERE object_id = ?"
+		var idno = await this.makeQuery(sql, [row_id]);
+		if(idno.length && idno[0].idno) return idno[0].idno
+		else return ''
+	}
 
 	async createSet(body, table, locale, ctx) {
 		var data = body
@@ -178,7 +186,7 @@ class CA {
 	}
 
 	async createSetItems(set_code, body, locale) {
-		if(!set_code) throw({msg: "Can not create set item for non-existing set!", statusCode: 404})
+		if(!set_code) throw({message: "Can not create set item for non-existing set!", status: 404})
 		var data = body
 		if(typeof body == 'string') data = JSON.parse(body)
 		var sql = "SELECT set_id, set_code FROM ca_sets WHERE set_code = ?";
@@ -235,7 +243,7 @@ class CA {
 		try {
 			var set_id = await this.getSetID(set_code, ctx.session.user.user_id)
 			var values = [set_id, ctx.session.user.user_id]
-			/*			
+			/*
 			var sql = "UPDATE ca_sets SET deleted = 1 WHERE set_id = ? and user_id = ?;"
 			try {
 				await this.makeQuery(sql, values);
@@ -358,9 +366,17 @@ class CA {
 
 
 	async getSearchForms() {
-		var sql = "SELECT CONCAT(language,'_',country) AS locale,form.form_id, form_code, label.name FROM ca_search_forms form INNER JOIN ca_search_form_labels label ON form.form_id = label.form_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id;"
+		var sql = "SELECT CONCAT(language,'_',country) AS locale,form.form_id, form_code, label.name, form.table_num FROM ca_search_forms form INNER JOIN ca_search_form_labels label ON form.form_id = label.form_id INNER JOIN ca_locales locale ON label.locale_id = locale.locale_id;"
 		var forms = await this.makeQuery(sql);
-		return groupSetsBy(forms, 'form_code');
+		var forms_grouped = groupSetsBy(forms, 'form_code', 'table_num');
+		var out = {}
+		for(var key in forms_grouped) {
+			var table = getTableName(forms_grouped[key].table_num)
+			if(!out[table]) out[table] = [forms_grouped[key]]
+			else out[table].push(forms_grouped[key])
+		}
+		return out
+		//return groupSetsBy(forms_grouped, 'table_num');
 	}
 
 
@@ -419,33 +435,92 @@ class CA {
 		// get models
 		var url = this.config.collectiveaccess.url + "/service.php/model/" + table + "?pretty=1&authToken=" + ctx.session.user.token;
 		console.log(url)
-		var result = await requestp(url)
-		var models = JSON.parse(result)
+		var result = await axios.get(url)
+		var models = result.data
 		if(!models[model]) throw('Model not found')
 		data[form].screens = await this.getUIScreens(ui_id, models[model])
 		data[form].relationship_types = models[model].relationship_types
 
-		//ctx.body = models[ctx.params.model]
-		return data[form]
+		if(ctx.query.format == 'csv') {
+			ctx.set('Content-disposition', `attachment; filename=${form}.csv`);
+			return this.getFormCSV(data[form])
+		} else return data[form]
+	}
+
+	getFormCSV(form) {
+		// TODO: Fix hardcoded locale
+		var locale = "fi_FI"
+		var data = ['välilehti,kentän nimi,kentän tyyppi,alikentät,ohje']
+		for(var screen in form.screens) {
+			for(var bundle of form.screens[screen].bundles) {
+				var help = ''
+				var type = ''
+				var subfields = ''
+				var alikentat = []
+
+				if(bundle.elements && bundle.elements.elements_in_set) {
+
+
+					// container
+					if(Object.keys(bundle.elements.elements_in_set).length > 1) {
+						for(var field in bundle.elements.elements_in_set) {
+							alikentat.push(bundle.elements.elements_in_set[field].display_label + ' [' + bundle.elements.elements_in_set[field].datatype + ']')
+
+						}
+						type = 'yhdistelmäkenttä'
+					} else {
+						type = bundle.elements.elements_in_set[Object.keys(bundle.elements.elements_in_set)[0]].datatype
+					}
+
+				}
+
+				subfields = alikentat.join(" | ")
+				if(bundle.bundle_name.includes('ca_')) type = "relaatio"
+
+				if(bundle.settings && bundle.settings.description && bundle.settings.description[locale]) {
+					help = '"' + bundle.settings.description[locale] +'"'
+				} else if(bundle.elements && bundle.elements.description) {
+					help = '"' + bundle.elements.description +'"'
+				}
+
+				var values = [screen,this.getBundleLabel(bundle, locale), type, subfields, help]
+				data.push(values.join(','))
+			}
+		}
+		return data.join('\n')
 	}
 
 
+	getBundleLabel(bundle, locale) {
+
+		if(bundle.settings.label) {
+			if(typeof bundle.settings.label == 'string')
+				return bundle.settings.label
+			else if(bundle.settings.label[locale])
+				return bundle.settings.label[locale]
+
+		} else if(bundle.elements && bundle.elements.name) {
+			return bundle.elements.name
+		}
+		return bundle.bundle_name + " (Label is MISSING)"
+	}
+
 	async getItemFromAPI(table, id, token) {
 		var url = this.config.collectiveaccess.url + "/service.php/item/" + table + "/id/" + id + "?pretty=1&authToken=" + token;
-		var result = await requestp(url, {json:true})
+		var result = await requestp(url)
 		var item = {}
 
-		item.id = result.object_id.value; // HARCDCODED(object_id): FIX THIS!
-		item.idno = result.idno.value;
-		item.type_id = result.type_id;
-		item.preferred_labels = result.preferred_labels;
+		item.id = result.data.object_id.value; // HARCDCODED(object_id): FIX THIS!
+		item.idno = result.data.idno.value;
+		item.type_id = result.data.type_id;
+		item.preferred_labels = result.data.preferred_labels;
 		item.elements = {}
-		item.links = result.related;
+		item.links = result.data.related;
 
-		for(var key in result) {
+		for(var key in result.data) {
 			if(key.includes(table)) {
 				var ele = key.replace(table + '.', '')
-				item.elements[ele] = result[key];
+				item.elements[ele] = result.data[key];
 			}
 		}
 
@@ -511,7 +586,7 @@ class CA {
 				// relations
 
 				if(table == 'ca_objects') {
-					item.media = await this.getMedia(id);
+					item.media = await this.getMedia(id, 'ca_objects_x_object_representations', 'object_id');
 					item.relations.entities = await this.getRelations('ca_objects_x_entities', 'entity', 'object_id', 'entity_id', id, true);
 					item.relations.collections = await this.getRelations('ca_objects_x_collections', 'collection', 'object_id', 'collection_id', id);
 					item.relations.storage_locations = await this.getRelations('ca_objects_x_storage_locations', 'storage_location', 'object_id', 'location_id', id, true);
@@ -526,6 +601,7 @@ class CA {
 					item.relations.objects = await this.getRelations('ca_objects_x_storage_locations', 'object', 'location_id', 'object_id', id);
 
 				} else if(table == 'ca_object_lots') {
+					item.media = await this.getMedia(id, 'ca_object_lots_x_object_representations', 'lot_id');
 					item.relations.entities = await this.getRelations('ca_object_lots_x_entities', 'entity', 'lot_id', 'entity_id', id, true);
 					item.relations.objects = await this.getObjectsByLOT(id);
 					item.object_count = await this.getLOTObjectCount(id);
@@ -543,7 +619,7 @@ class CA {
 				return null
 			}
 		} catch(e) {
-			throw({msg: "Could not get item " + id + " error: " + e.message, statusCode: 404})
+			throw({message: "Could not get item " + id + " error: " + e.message, status: 404})
 		}
 
 
@@ -634,12 +710,12 @@ class CA {
 	}
 
 
-	async getMedia(id, just_primary) {
+	async getMedia(id, rel_table, id_name, just_primary) {
 		var out = []
 		const zlib = require('zlib');
 		var primary = " ORDER by is_primary";
 		if(just_primary) primary = " WHERE is_primary = 1";
-		var sql = "SELECT  is_primary, m.representation_id, media, mimetype, original_filename FROM  ca_objects_x_object_representations rel INNER JOIN  ca_object_representations m ON m.representation_id = rel.representation_id WHERE object_id = ? " + primary
+		var sql = "SELECT  is_primary, m.representation_id, media, mimetype, original_filename FROM " + rel_table + " rel INNER JOIN  ca_object_representations m ON m.representation_id = rel.representation_id WHERE " + id_name + " = ? " + primary
 		var representations = await this.makeQuery(sql, id);
 
 		for(var representation of representations) {
@@ -732,7 +808,7 @@ class CA {
 		var limit = 10
 		if(parseInt(ctx.query.limit)) {
 			limit = parseInt(ctx.query.limit)
-		} 
+		}
 		var values = [table_num, ctx.session.user.user_id, limit]
 		var actions = {'I': 'lisäys', 'D': 'poisto', 'U': 'muutos'}
 		var sql = "SELECT * FROM (SELECT  FROM_UNIXTIME(log_datetime) as date, log.logged_row_id, user.user_name, log.changetype FROM ca_change_log log INNER JOIN ca_users user ON user.user_id = log.user_id WHERE log.logged_table_num IN (?) AND log.user_id = ?  AND log.changetype != 'D' ORDER BY log_id DESC LIMIT ?) as sub GROUP by logged_row_id ORDER BY date DESC;"
@@ -815,9 +891,9 @@ class CA {
 		if(data.attributes) {
 			for(var attr in data.attributes) {
 				// separate relations and elements
-				if(attr.includes('date')) // TODO: make check that does not depend on attribute name but metadata element type
-					object.attributes[attr] = this.checkDateRange(attr, data.attributes[attr]); // must reverse day and month for API call
-				else
+				//if(attr.includes('date')) // TODO: make check that does not depend on attribute name but metadata element type
+					//object.attributes[attr] = this.checkDateRange(attr, data.attributes[attr]); // must reverse day and month for API call
+				//else
 					object.attributes[attr] = data.attributes[attr];
 			}
 		}
@@ -825,8 +901,9 @@ class CA {
 		if(data.relations) {
 			if(data.relations.ca_entities) {
 				var relations = [];
-				for(var entity of data.relations.ca_entities) {
-					relations.push({entity_id: entity.entity_id, type_id: entity.type_id, direction:"ltor"});
+				for(var rel of data.relations.ca_entities) {
+					if(!rel.type_id) throw('Missing link type')
+					relations.push({entity_id: rel.entity_id, type_id: rel.type_id, direction:"ltor"});
 				}
 				object.related.ca_entities = relations;
 			}
@@ -834,6 +911,7 @@ class CA {
 			if(data.relations.ca_storage_locations) {
 				var relations = [];
 				for(var rel of data.relations.ca_storage_locations) {
+					if(!rel.type_id) throw('Missing link type')
 					relations.push({location_id: rel.location_id, type_id: rel.type_id, direction:"ltor"});
 				}
 				object.related.ca_storage_locations = relations;
@@ -842,6 +920,7 @@ class CA {
 			if(data.relations.ca_collections) {
 				var relations = [];
 				for(var rel of data.relations.ca_collections) {
+					if(!rel.type_id) throw('Missing link type')
 					relations.push({collection_id: rel.collection_id, type_id: rel.type_id, direction:"ltor"});
 				}
 				object.related.ca_collections = relations;
@@ -854,63 +933,76 @@ class CA {
 
 		var url = this.config.collectiveaccess.url + "/service.php/item/" + table + "?pretty=1&authToken=" + token;
 		debug(url)
-		var result = await requestp(url, {method: "PUT", json: object})
-		// we need to take care of relationship records separately
-		debug(result)
-		var id = null
-		if(table == 'ca_objects') id = result.object_id;
-		if(table == 'ca_object_lots') id = result.lot_id;
-		if(table == 'ca_entities') id = result.entity_id;
-		if(table == 'ca_collections') id = result.collection_id;
-		if(table == 'ca_occurrences') id = result.occurrence_id;
-		//console.log(object.attributes.ca_entities)
+		try {
+			var response = await axios.put(url, object)
+			var result = response.data
+			debug(result)
+			if(!result.ok) {
+				if(result.errors) throw(result.errors)
+				else throw('Error in item creation')
+			}
+			// we need to take care of relationship records separately
+			var id = null
+			if(table == 'ca_objects') id = result.object_id;
+			if(table == 'ca_object_lots') id = result.lot_id;
+			if(table == 'ca_entities') id = result.entity_id;
+			if(table == 'ca_collections') id = result.collection_id;
+			if(table == 'ca_occurrences') id = result.occurrence_id;
+			//console.log(object.attributes.ca_entities)
 
-		await this.saveRelationInfo(table, data, id) // relations to entities only!
+			await this.saveRelationInfo(table, data, id) // relations to entities only!
 
-		return result;
-
+			return result
+		} catch(e) {
+			console.log(e)
+			throw(e)
+		}
 	}
 
-
-	async createRepresentation(importPath, filename, original_filename, object_id, token) {
+// TODO: muuta tätä niin, että representaation voi tehdä myös muillle tyypeille
+	//async createRepresentation(importPath, filename, original_filename, object_id, token) {
+	async createRepresentation(options) {
 		var path = require("path")
-		var import_file = path.join(importPath, filename)
+		var import_file = path.join(this.config.collectiveaccess.import_path, options.fileName)
 		var data = {
 			 "intrinsic_fields":{
 			   "type_id":"134",
-			   "media": import_file,
-			   "original_file": original_filename
+			   "media": import_file
 			 },
 			 "preferred_labels":[
 			   {
 				 "locale":"fi_FI",
-				 "name": filename
+				 "name": options.fileName
 			   }
 			 ],
 			  "attributes":{
-				"linked_original_file": [
+				"external_media": [
 				  {
-					"locale":"fi_FI",
-					"linked_original_file":original_filename
+					"external_media_filename":options.fullPath
 				  }
 				]
 			  },
-			 "related": {
-				 "ca_objects": [{"object_id": object_id}]
-			 }
+			 "related": {}
 		}
 
-		var url = this.config.collectiveaccess.url + "/service.php/item/ca_object_representations?pretty=1&authToken=" + token;
+		// related to item
+		data.related[options.related_to.table] = []
+		var item_target = {}
+		item_target[options.related_to.item_id_name] = options.related_to.item[options.related_to.item_id_name]
+		// other thatn 'ca_objects' need 'type_id' to be defined
+		if(options.related_to.table != 'ca_objects') item_target.type_id = "86" // HARDCODED!!!!
+		data.related[options.related_to.table].push(item_target)
+
+		var url = this.config.collectiveaccess.url + "/service.php/item/ca_object_representations?pretty=1&authToken=" + options.token;
 		debug(url)
 		console.log(JSON.stringify(data, null, 2))
 		try {
-			var result = await requestp(url, {method: "PUT", json: data})
+			var result = await axios.put(url, data)
 			console.log('**********************************************************************')
 			console.log('********           MEDIA IMPORT REQUEST                     *********')
 			console.log('**********************************************************************')
 			console.log(result)
-			if(result.ok) return result;
-			else throw(JSON.stringify(data, null, 2))
+			return result.data;
 		} catch(e) {
 			console.log(e)
 			throw({message: 'Media import failed! ' + e})
@@ -973,11 +1065,18 @@ class CA {
 		try {
 			var url = this.config.collectiveaccess.url + "/service.php/item/" + table + "/id/" + id + "?pretty=1&authToken=" + token;
 			debug(url)
-			var result = await requestp(url, {method: "PUT", json: object})
-			debug(result)
-			//if(table == 'ca_objects' || table == 'ca_object_lots') await this.saveRelationInfo(table, data, id)
+			var result = await axios.put(url, object)
+			debug(result.data)
+			if(!result.data.ok) {
+				if(result.data.errors) throw(result.data.errors)
+				else throw('Error in edit')
+			}
+			if(table == 'ca_objects' || table == 'ca_object_lots') await this.saveRelationInfo(table, data, id)
 			if(user_id) await this.logChange(table, id, user_id)
-			return result;
+			if(result.data)
+				return result.data;
+			else
+				return object;
 		} catch(e) {
 			console.log(e)
 			throw(e);
@@ -1008,7 +1107,7 @@ class CA {
 			rel_table = 'ca_object_lots_x_entities'
 			id_name = 'lot_id'
 		}
-		debug('*** RELATION INFO for ' + rel_table +' *** ' + table)
+		info('*** RELATION INFO for ' + rel_table +' *** ' + table)
 
 		// enitity relationships with relation info (API does not save this data)
 		if(data.relations && data.relations.ca_entities) {
@@ -1068,8 +1167,12 @@ class CA {
 
 		var url = this.config.collectiveaccess.url + "/service.php/item/ca_list_items/id?pretty=1&authToken=" + token;
 		debug(url)
-		var result = await requestp(url, {method: "PUT", json: data})
-		return result;
+		try {
+			var result = await axios.put(url, data)
+			return result.data;
+		} catch(e) {
+			throw('List item creation failed. ' + e)
+		}
 	}
 
 
@@ -1108,23 +1211,25 @@ class CA {
 		var sql = "select  meta.element_id, meta.list_id, meta.element_code, meta.parent_id, meta.datatype, label.name, locale.language, locale.country from ca_metadata_elements meta INNER JOIN ca_metadata_element_labels label ON label.element_id = meta.element_id INNER JOIN ca_locales locale ON locale.locale_id = label.locale_id WHERE meta.element_code = ?;"
 		var elements_raw = await this.makeQuery(sql, [code]);
 		var elements = groupBy(elements_raw, 'element_code');
-		if(elements[code].type == 'container') {
-			var sql = "select  meta.element_id, meta.list_id, meta.element_code, meta.parent_id, meta.datatype, label.name, locale.language, locale.country from ca_metadata_elements meta INNER JOIN ca_metadata_element_labels label ON label.element_id = meta.element_id INNER JOIN ca_locales locale ON locale.locale_id = label.locale_id WHERE meta.parent_id = ?;"
-			var subs_raw = await this.makeQuery(sql, [elements[code].id]);
-			elements[code].elements = groupBy(subs_raw, 'element_code');
+		if(elements[code]) {
+			if(elements[code].type == 'container') {
+				var sql = "select  meta.element_id, meta.list_id, meta.element_code, meta.parent_id, meta.datatype, label.name, locale.language, locale.country from ca_metadata_elements meta INNER JOIN ca_metadata_element_labels label ON label.element_id = meta.element_id INNER JOIN ca_locales locale ON locale.locale_id = label.locale_id WHERE meta.parent_id = ?;"
+				var subs_raw = await this.makeQuery(sql, [elements[code].id]);
+				elements[code].elements = groupBy(subs_raw, 'element_code');
 
-			// get list values if desired
-			if(getListValues) {
-				for(var ele in elements[code].elements) {
-					if(elements[code].elements[ele].type == 'list') {
-						debug('Getting list values...' + ele)
-						var list_items = await this.getList(elements[code].elements[ele].list_id, 'FI_fi');
-						elements[code].elements[ele].values = list_items;
+				// get list values if desired
+				if(getListValues) {
+					for(var ele in elements[code].elements) {
+						if(elements[code].elements[ele].type == 'list') {
+							debug('Getting list values...' + ele)
+							var list_items = await this.getList(elements[code].elements[ele].list_id, 'FI_fi');
+							elements[code].elements[ele].values = list_items;
+						}
 					}
 				}
+			} else if(elements[code].type == 'list' && getListValues) {
+				elements[code].values = await this.getList(elements[code].list_id, 'FI_fi');
 			}
-		} else if(elements[code].type == 'list' && getListValues) {
-			elements[code].values = await this.getList(elements[code].list_id, 'FI_fi');
 		}
 		return elements;
 	}
@@ -1282,8 +1387,22 @@ class CA {
 	}
 
 
+	async getMaxLotId() {
+		var sql = 'SELECT MAX(lot_id) as lot_id FROM ca_object_lots;'
+		var max = await this.makeQuery(sql);
+		if(max.length == 1) return max[0]
+		else throw('max lot_id not found!')
+	}
+
+	async checkObjectIDNO(lot_id, idno) {
+		var sql = 'SELECT idno FROM ca_objects WHERE lot_id = ? AND idno = ?;'
+		var result = await this.makeQuery(sql, [lot_id, idno]);
+		if(result.length == 1) return result[0]
+		else throw({message: "IDNO not found!", status: 404})
+	}
+
 	async getNextIDNO(lot_id, type) {
-		var nextIDNO = {idno: ''}
+		var nextIDNO = {idno: '', lot_id: '', prefix: '', lot_separator: ''}
 		var next = 1; // default if we have on objects
 		var sql = "SELECT idno, lot_id FROM ca_objects WHERE lot_id = " + lot_id;
 		debug_sql(sql)
@@ -1300,8 +1419,15 @@ class CA {
 		// add prefix (required in OSC numbering)
 		if(type && this.config.numbering_schema.prefix[type]) {
 			nextIDNO.idno = this.config.numbering_schema.prefix[type] + lot_id + ":" + next;
+			nextIDNO.lot_id = lot_id
+			nextIDNO.lot_separator = this.config.numbering_schema.lot_separator
+			nextIDNO.next = next
+			nextIDNO.prefix = this.config.numbering_schema.prefix[type]
 		} else {
 			nextIDNO.idno = lot_id + ":" + next;
+			nextIDNO.lot_id = lot_id
+			nextIDNO.lot_separator = this.config.numbering_schema.lot_separator
+			nextIDNO.next = next
 		}
 		return nextIDNO;
 	}
@@ -1418,11 +1544,12 @@ function groupListsBy(objectArray, property) {
 	}, {})
 }
 
-function groupSetsBy(objectArray, property) {
+function groupSetsBy(objectArray, property, extra) {
 	return objectArray.reduce(function (acc, obj) {
 		let key = obj[property]
 		if (!acc[key]) {
 			acc[key] = {id: obj.set_id, labels:[]}
+			if(extra) acc[key][extra] = obj[extra] // one additional property
 		}
 		acc[key].labels.push({name:obj.name, language: obj.locale})
 		return acc

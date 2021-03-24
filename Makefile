@@ -1,13 +1,8 @@
 IMPORT := /home/arihayri/Pictures/import
+VERSION := 0.1
 
 build:
-	docker build -t osc/oscari-api:latest .
-
-push:
-	docker push osc/oscari-api:latest
-
-pull:
-	docker pull osc/oscari-api:latest
+	docker build -t osc/oscari-api:$(VERSION) .
 
 start:
 	docker run -d --name oscari-api \
@@ -23,8 +18,8 @@ start:
 		-e DB_USER=root \
 		-e DB_PW=root \
 		-e DB_NAME=c_access \
-		-e DEBUG=error,router \
-		 osc/oscari-api
+		-e DEBUG=error,router,debug \
+		osc/oscari-api:$(VERSION)
 
 restart:
 	docker stop oscari-api
