@@ -1,6 +1,8 @@
 
 # Oscari API
 
+**The plug was pulled on the project, so this repository is now archived **
+
 Oscari API is a backend for Finnish Oscari museum information system called Oscari (Oscari UI is released later). Oscari is based on CollectiveAccess with Finnish installation profile. In its current state Oscari-API is *NOT* a generic, third-party API for CollectiveAccess.
 
 Oscari API is designed for creating user interfaces for CA data.
